@@ -32,7 +32,7 @@ setup(
         'console_scripts': [
             'imc2zarr=mcd_stitcher.converter:main',
             'zarr_stitch=mcd_stitcher.stitcher:main',
-            'mcd_stitch=mcd_stitcher.mcd_stitch:main',
+            'mcd_stitch=mcd_stitcher:main',
         ],
     },
 )
