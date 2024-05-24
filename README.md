@@ -21,7 +21,7 @@ pip install mcd_stitcher
 ## Command line usage
 
 *MCD to Zarr converter
-]
+
 imc2zarr <mcd_folder> <zarr_folder>
 
 *Zarr dataset stitcher
