@@ -34,6 +34,6 @@ mcd_stitch <mcd_folder> <zarr_folder>
 
 ### Arguments
 * mcd_folder:
-  * the root folder of the IMC scan containing a single and/or multiple mcd files.
+  * The root folder of the IMC scan containing a single and/or multiple mcd files.
 * zarr_folder: 
-  *Storage location of converted MCD files in Zarr format and the starting point for stitching zarr files.
+  * Storage location of converted MCD files in Zarr format and the starting point for stitching zarr files.
