@@ -3,9 +3,9 @@ from setuptools import setup, find_packages
 setup(
     name='mcd_stitcher',
     version='0.1.0',
-    author = 'Pawan Chaurasia'
-    author_email = 'pchaurasia98@gmail.com'
-    description = 'MCD to Zarr conversion and stitching'
+    author='Pawan Chaurasia',
+    author_email='pchaurasia98@gmail.com',
+    description='MCD to Zarr conversion and stitching',
     long_description=open('README.md').read(),
     long_description_content_type='text/markdown',
     url='https://github.com/PawanChaurasia/mcd_stitcher',
