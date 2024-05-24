@@ -25,7 +25,7 @@ imc2zarr <mcd_folder> <zarr_folder>
 *Zarr dataset stitcher
 zarr_stitch <zarr_folder>
 
-*Composite MCD to Zarr to Stitch function
+*Conposite MCD to Zarr to Stitch function
 mcd_stitch <mcd_folder> <zarr_folder>
 
 ### Arguments
