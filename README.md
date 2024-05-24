@@ -16,7 +16,7 @@ pip install mcd_stitcher
 * python_dateutil
 * xarray
 * zarr
-* scikit-learn
+* scikit-image
 
 ## Command line usage
 
