@@ -1,12 +1,12 @@
-import shutil
-import os
 import zarr
 import numpy as np
 from datetime import datetime
 from pathlib import Path
-from skimage.io import imsave
-from tifffile import imwrite
 import argparse
+import xarray as xr
+import tifffile
+import xmltodict
+from typing import Union
 
 class ZarrStitcher:
     def __init__(self, zarr_folder):
@@ -29,7 +29,8 @@ class ZarrStitcher:
                             'width': meta['q_maxx'],
                             'height': meta['q_maxy'],
                             'roi_id': meta['q_id'],
-                            'file_path': zarr_path / group_key
+                            'file_path': zarr_path / group_key,
+                            'channels': meta.get('channels', [])  # Assuming 'channels' is in the metadata
                         }
                         metadata.append(roi_meta)
         return metadata
@@ -39,7 +40,25 @@ class ZarrStitcher:
         dt = datetime.fromisoformat(timestamp.split("+")[0].split(".")[0])
         return dt.strftime('%Y-%m-%dT%H:%M:%S')
 
-    def stitch_rois(self, rois, output_path):
+    def extract_channel_names(self, zarr_folder):
+        """Extract channel names from the mcd_schema.xml file in the Zarr folder."""
+        schema_file = zarr_folder / "mcd_schema.xml"
+        
+        if not schema_file.exists():
+            raise FileNotFoundError(f"Schema file not found: {schema_file}")
+        
+        with open(schema_file, 'r', encoding='utf-8') as file:
+            xml_content = file.read()
+            schema = xmltodict.parse(xml_content)
+            
+            channel_names = []
+            for channel in schema['MCDSchema']['AcquisitionChannel']:
+                if channel['AcquisitionID'] == '1':  # Only consider AcquisitionID 1
+                    channel_names.append(channel['ChannelLabel'])
+            
+            return channel_names
+
+    def stitch_rois(self, rois, output_path, channel_names):
         """Stitch ROIs into a single image and save as OME-TIFF."""
         min_x = min(roi['stage_x'] for roi in rois)
         min_y = min(roi['stage_y'] for roi in rois)
@@ -70,9 +89,54 @@ class ZarrStitcher:
             except Exception as e:
                 print(f"Error processing ROI ID: {roi['roi_id']}, Error: {e}")
 
+        # Convert to xarray DataArray to use the write_ometiff function
+        stitched_da = xr.DataArray(
+            stitched_image,
+            dims=("c", "y", "x"),
+            coords={"c": channel_names[:num_channels], "y": range(stitched_height), "x": range(stitched_width)}
+        )
+
         # Save the stitched image as an OME-TIFF file
-        imwrite(output_path, stitched_image, photometric='minisblack', metadata={'axes': 'CYX'})
+        self.write_ometiff(stitched_da, output_path)
         print(f"Stitched image saved to {output_path}")
+
+    def write_ometiff(self, imarr: xr.DataArray, outpath: Union[Path, str], **kwargs) -> None:
+        """Write DataArray to a multi-page OME-TIFF file with proper metadata."""
+        outpath = Path(outpath)
+        imarr = imarr.transpose("c", "y", "x")
+        Nc, Ny, Nx = imarr.shape
+        # Generate standard OME-XML
+        channels_xml = '\n'.join(
+            [f"""<Channel ID="Channel:0:{i}" Name="{channel}" SamplesPerPixel="1" />"""
+                for i, channel in enumerate(imarr.c.values)]
+        )
+        xml = f"""<?xml version="1.0" encoding="UTF-8"?>
+        <OME xmlns="http://www.openmicroscopy.org/Schemas/OME/2016-06"
+                xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+                xsi:schemaLocation="http://www.openmicroscopy.org/Schemas/OME/2016-06 http://www.openmicroscopy.org/Schemas/OME/2016-06/ome.xsd">
+            <Image ID="Image:0" Name="{outpath.stem}">
+                <Pixels BigEndian="false"
+                        DimensionOrder="XYZCT"
+                        ID="Pixels:0"
+                        Interleaved="false"
+                        SizeC="{Nc}"
+                        SizeT="1"
+                        SizeX="{Nx}"
+                        SizeY="{Ny}"
+                        SizeZ="1"
+                        PhysicalSizeX="1.0"
+                        PhysicalSizeY="1.0"
+                        Type="uint16">
+                    <TiffData />
+                    {channels_xml}
+                </Pixels>
+            </Image>
+        </OME>
+        """
+        outpath.parent.mkdir(parents=True, exist_ok=True)
+        # Note resolution: 1 um/px = 25400 px/inch
+        tifffile.imwrite(outpath, data=imarr.values, description=xml, contiguous=True, 
+                         resolution=(25400, 25400, "inch"), **kwargs)
 
     def process_all_folders(self):
         """Process all Zarr folders."""
@@ -89,8 +153,11 @@ class ZarrStitcher:
             # Extract metadata from the current Zarr file
             rois = self.extract_metadata(zarr_folder)
 
+            # Extract channel names from the mcd_schema.xml file
+            channel_names = self.extract_channel_names(zarr_folder)
+
             # Stitch the ROIs and save the result
-            self.stitch_rois(rois, output_path)
+            self.stitch_rois(rois, output_path, channel_names)
 
 def main():
     parser = argparse.ArgumentParser(description="Stitch Zarr files into a single OME-TIFF file.")
