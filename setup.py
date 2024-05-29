@@ -2,7 +2,7 @@ from setuptools import setup, find_packages
 
 setup(
     name='mcd_stitcher',
-    version='0.1.3',
+    version='0.1.4',
     author='Pawan Chaurasia',
     author_email='pchaurasia98@gmail.com',
     description='MCD to Zarr conversion and stitching',
@@ -26,7 +26,9 @@ setup(
         'python_dateutil',
         'xarray',
         'zarr',
-        'scikit-image'
+        'scikit-image',
+        'xmltodict',
+        'tifffile'
     ],
     entry_points={
         'console_scripts': [
