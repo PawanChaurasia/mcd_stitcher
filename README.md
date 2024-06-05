@@ -12,7 +12,7 @@ pip install mcd_stitcher
 
 ### Requirements
 
-The following dependencies will be installed:
+Ensure you have the following dependencies installed:
 
 - `click`
 - `numpy`
@@ -58,7 +58,7 @@ Stitches Zarr files into a single dataset.
 **Command:** 
 
 ```
-mcd_stitch <mcd_folder> <zarr_folder>
+mcd_stitch <mcd_folder> <zarr_folder> [--lzw]
 ```
 
 **Description:**
@@ -67,6 +67,7 @@ Combines the MCD to Zarr conversion and Zarr stitching into a single command.
 **Arguments:**
 - **mcd_folder:** The root folder of the IMC scan containing single or multiple MCD files.
 - **zarr_folder:** Storage location of converted MCD files in Zarr format and the starting point for stitching Zarr files.
+- **--lzw:** Optional flag to enable LZW compression.
 
 ### OME-TIFF Subsetter
 
