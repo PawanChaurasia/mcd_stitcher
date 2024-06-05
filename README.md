@@ -12,7 +12,7 @@ pip install mcd_stitcher
 
 ### Requirements
 
-Ensure you have the following dependencies installed:
+The following dependencies will installed:
 
 - `click`
 - `numpy`
