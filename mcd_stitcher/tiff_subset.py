@@ -81,12 +81,12 @@ def subset_tiff(tiff_path: str, channels: Union[List[int], None]):
     write_ome_tiff(subset_image_data, subset_channel_names, output_path)
     print(f"OME-TIFF file written to {output_path}")
 
-def process_folder(folder_path: str):
+def process_folder(folder_path: str, channels: Union[List[int], None]):
     for root, dirs, files in os.walk(folder_path):
         for file in files:
             if file.endswith('.tiff') or file.endswith('.ome.tiff'):
-                subset_tiff(os.path.join(root, file), None)
-
+                subset_tiff(os.path.join(root, file), channels)
+                
 def main():
     parser = argparse.ArgumentParser(description="Subset OME-TIFF files.")
     parser.add_argument("tiff_path", type=str, help="Path to the OME-TIFF file or directory.")
@@ -95,13 +95,14 @@ def main():
 
     args = parser.parse_args()
 
+    channels = parse_channels(args.channels) if args.channels else None
+
     if os.path.isdir(args.tiff_path):
-        process_folder(args.tiff_path)
+        process_folder(args.tiff_path, channels)
     else:
         if args.list_channels:
             list_channels(args.tiff_path)
         else:
-            channels = parse_channels(args.channels) if args.channels else None
             subset_tiff(args.tiff_path, channels)
 
 if __name__ == "__main__":
