@@ -2,7 +2,7 @@ from setuptools import setup, find_packages
 
 setup(
     name='mcd_stitcher',
-    version='0.1.5',
+    version='0.1.6',
     author='Pawan Chaurasia',
     author_email='pchaurasia98@gmail.com',
     description='MCD to Zarr conversion and stitching',
@@ -18,7 +18,7 @@ setup(
         'Operating System :: OS Independent',
     ],
     packages=find_packages(),
-    python_requires='>=3.7',
+    python_requires='>=3.11',
     install_requires=[
         'click',
         'numpy',
