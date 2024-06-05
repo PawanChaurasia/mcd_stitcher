@@ -9,8 +9,9 @@ import xmltodict
 from typing import Union
 
 class ZarrStitcher:
-    def __init__(self, zarr_folder):
+    def __init__(self, zarr_folder, use_lzw=False):
         self.zarr_folder = Path(zarr_folder)
+        self.use_lzw = use_lzw
 
     def extract_metadata(self, zarr_path):
         """Extract metadata from the Zarr file."""
@@ -61,9 +62,9 @@ class ZarrStitcher:
     def stitch_rois(self, rois, output_path, channel_names):
         """Stitch ROIs into a single image and save as OME-TIFF."""
         min_x = min(roi['stage_x'] for roi in rois)
-        min_y = min(roi['stage_y'] for roi in rois)
+        min_y = min(roi['stage_y'] - roi['height'] for roi in rois)
         max_x = max(roi['stage_x'] + roi['width'] for roi in rois)
-        max_y = max(roi['stage_y'] + roi['height'] for roi in rois)
+        max_y = max(roi['stage_y'] for roi in rois)
 
         stitched_width = int(max_x - min_x)
         stitched_height = int(max_y - min_y)
@@ -84,7 +85,7 @@ class ZarrStitcher:
                 image_key = list(zarr_group.keys())[0]
                 image = zarr_group[image_key][:]  # Load all channels
                 x_offset = int(roi['stage_x'] - min_x)
-                y_offset = int(stitched_height - (roi['stage_y'] + roi['height'] - min_y))
+                y_offset = abs(int(roi['stage_y'] - max_y))
                 stitched_image[:, y_offset:y_offset + image.shape[1], x_offset:x_offset + image.shape[2]] = image
             except Exception as e:
                 print(f"Error processing ROI ID: {roi['roi_id']}, Error: {e}")
@@ -135,8 +136,12 @@ class ZarrStitcher:
         """
         outpath.parent.mkdir(parents=True, exist_ok=True)
         # Note resolution: 1 um/px = 25400 px/inch
-        tifffile.imwrite(outpath, data=imarr.values, description=xml, contiguous=True, 
-                         resolution=(25400, 25400, "inch"), **kwargs)
+        if self.use_lzw:
+            tifffile.imwrite(outpath, data=imarr.values, description=xml, contiguous=True,
+                            compression='lzw', resolution=(25400, 25400, "inch"), **kwargs)
+        else:
+            tifffile.imwrite(outpath, data=imarr.values, description=xml, contiguous=True,
+                            resolution=(25400, 25400, "inch"), **kwargs)
 
     def process_all_folders(self):
         """Process all Zarr folders."""
@@ -162,10 +167,11 @@ class ZarrStitcher:
 def main():
     parser = argparse.ArgumentParser(description="Stitch Zarr files into a single OME-TIFF file.")
     parser.add_argument("zarr_folder", type=str, help="Path to the Zarr folder")
+    parser.add_argument("--lzw", action="store_true", help="Enable LZW compression")
     
     args = parser.parse_args()
     
-    stitcher = ZarrStitcher(args.zarr_folder)
+    stitcher = ZarrStitcher(args.zarr_folder, use_lzw=args.lzw)
     stitcher.process_all_folders()
 
 if __name__ == "__main__":
