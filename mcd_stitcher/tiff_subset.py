@@ -117,7 +117,7 @@ def subset_tiff(tiff_path: str, channels: Union[List[int], None], pyramid: bool,
         output_path = f"{base}_filtered_pyramid.ome.tiff"
         # Create and write pyramidal OME-TIFF
         with tifffile.TiffWriter(output_path, bigtiff=True) as tif:
-            options = dict(tile=tile_size, metadata={'axes': 'CYX'})
+            options = dict(tile=tile_size, metadata={'axes': 'CYX', 'Channel': {'Name': subset_channel_names}})
             pyramid_levels = create_pyramid(subset_image_data, levels=levels)
 
             for level, img in enumerate(pyramid_levels):
