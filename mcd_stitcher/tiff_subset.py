@@ -5,6 +5,9 @@ import numpy as np
 import xml.etree.ElementTree as ET
 from typing import List, Union
 from pathlib import Path
+import traceback
+from datetime import datetime
+
 
 def read_ome_tiff(tiff_path: str) -> (np.ndarray, List[str]):
     with tifffile.TiffFile(tiff_path) as tif:
@@ -48,7 +51,7 @@ def write_ome_tiff(image_data: np.ndarray, channel_names: List[str], output_path
     # Write OME-TIFF file
     tifffile.imwrite(output_path, image_data, description=xml_metadata, metadata={'axes': 'CYX'})
 
-def create_pyramid(image, levels):
+def create_pyramid(image, levels=4):
     """Create a list of downsampled images to form pyramid levels."""
     pyramid = [image]
     for level in range(1, levels):
@@ -57,22 +60,14 @@ def create_pyramid(image, levels):
         pyramid.append(downsampled)
     return pyramid
 
-def write_pyramidal_tiff(input_path, tile_size=(256, 256), levels=4):
-    with tifffile.TiffFile(input_path) as tif:
-        image_data = tif.asarray()
-        ome_metadata = tif.ome_metadata
+def write_pyramidal_tiff(image_data: np.ndarray, channel_names: List[str], output_path: str):
+    tile_size = (256, 256)
+    levels = 4
 
-    # Parse OME-XML metadata
-    root = ET.fromstring(ome_metadata)
-    metadata_dict = {elem.tag: elem.text for elem in root.iter()}
+    pyramid_levels = create_pyramid(image_data, levels=levels)
     
-    pyramid_levels = create_pyramid(image_data, levels=levels)  # 1 base level + 3 additional levels
-    
-    base, ext = os.path.splitext(input_path)
-    output_path = f"{base}_pyramidal.ome.tiff"
-
     with tifffile.TiffWriter(output_path, bigtiff=True) as tif:
-        options = dict(tile=tile_size, metadata=metadata_dict)
+        options = dict(tile=tile_size, metadata={'axes': 'CYX', 'Channel': {'Name': channel_names}})
 
         for level, img in enumerate(pyramid_levels):
             if level == 0:
@@ -98,64 +93,70 @@ def parse_channels(channel_str: str) -> List[int]:
             channels.append(int(part))
     return channels
 
-def subset_tiff(tiff_path: str, channels: Union[List[int], None], pyramid: bool, tile_size: tuple, levels: int):
-    image_data, channel_names = read_ome_tiff(tiff_path)
-    
-    if channels is None:
-        channels = [i for i, name in enumerate(channel_names) if 'X' not in name and 'Y' not in name and 'Z' not in name and
-                    any(metal in name for metal in [f"{i}" for i in range(141, 194)])]
-    
-    # Subset the image data and channel names
-    subset_image_data = image_data[channels, :, :]
-    subset_channel_names = [channel_names[i] for i in channels]
+def subset_tiff(tiff_path: str, channels: Union[List[int], None], pyramid: bool, log_file: str):
+    try:
+        image_data, channel_names = read_ome_tiff(tiff_path)
+        
+        if channels is None:
+            channels = [i for i, name in enumerate(channel_names) if
+                        any(metal in name for metal in [f"{i}" for i in range(141, 194)])]
+        
+        # Subset the image data and channel names
+        subset_image_data = image_data[channels, :, :]
+        subset_channel_names = [channel_names[i] for i in channels]
 
-    # Generate output path
-    base, ext = os.path.splitext(tiff_path)
-    output_path = f"{base}_filtered.ome.tiff"
-    
-    if pyramid:
-        output_path = f"{base}_filtered_pyramid.ome.tiff"
-        # Create and write pyramidal OME-TIFF
-        with tifffile.TiffWriter(output_path, bigtiff=True) as tif:
-            options = dict(tile=tile_size, metadata={'axes': 'CYX', 'Channel': {'Name': subset_channel_names}})
-            pyramid_levels = create_pyramid(subset_image_data, levels=levels)
+        # Generate output path
+        base, ext = os.path.splitext(tiff_path)
+        output_path = f"{base}_filtered.ome.tiff"
+        
+        if pyramid:
+            output_path = f"{base}_filtered_pyramid.ome.tiff"
+            # Create and write pyramidal OME-TIFF
+            write_pyramidal_tiff(subset_image_data, subset_channel_names, output_path)
+        else:
+            # Write regular OME-TIFF
+            write_ome_tiff(subset_image_data, subset_channel_names, output_path)
+        
+        print(f"OME-TIFF file written to {output_path}")
+    except Exception as e:
+        timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        with open(log_file, 'a') as log:
+            log.write(f"{timestamp} - Error processing {tiff_path}: {str(e)}\n")
+            log.write(traceback.format_exc() + '\n')
+        print(f"{timestamp} - Error processing {tiff_path}. Logged the error and continuing...")
 
-            for level, img in enumerate(pyramid_levels):
-                if level == 0:
-                    tif.write(img, subifds=levels-1, **options)
-                else:
-                    tif.write(img, subfiletype=1, **options)
-    else:
-        # Write regular OME-TIFF
-        write_ome_tiff(subset_image_data, subset_channel_names, output_path)
-    
-    print(f"OME-TIFF file written to {output_path}")
-
-def process_folder(folder_path: str, pyramid: bool, tile_size: tuple, levels: int):
+def process_folder(folder_path: str, pyramid: bool, log_file: str):
     for root, dirs, files in os.walk(folder_path):
         for file in files:
             if file.endswith('.tiff') or file.endswith('.ome.tiff'):
-                subset_tiff(os.path.join(root, file), None, pyramid, tile_size, levels)
+                subset_tiff(os.path.join(root, file), None, pyramid, log_file)
 
 def main():
-    parser = argparse.ArgumentParser(description="Subset OME-TIFF files.")
+    parser = argparse.ArgumentParser(description="""
+    Subset OME-TIFF files.
+
+    For more information on command usage, visit:
+    https://github.com/PawanChaurasia/mcd_stitcher
+    """)
     parser.add_argument("tiff_path", type=str, help="Path to the OME-TIFF file or directory.")
-    parser.add_argument("-c", "--channels", type=str, help="Channels to subset, e.g., '0-5,7,10'.")
-    parser.add_argument("--list-channels", action="store_true", help="List channels in the OME-TIFF file.")
-    parser.add_argument("--pyramid", action="store_true", help="Create pyramidal OME-TIFF with tiling.")
-    parser.add_argument("--tile-size", type=int, nargs=2, default=(256, 256), help="Tile size for pyramidal OME-TIFF.")
-    parser.add_argument("--levels", type=int, default=4, help="Number of pyramid levels.")
+    parser.add_argument("-c", action="store_true", help="Lists all channels in the OME-TIFF file.")
+    parser.add_argument("-f", type=str, nargs='?', const='', help="Filter and subset channels. Provide channels to subset, e.g., '0-5,7,10'. If no channels are provided, default filtering is applied.")
+    parser.add_argument("-p", action="store_true", help="Create pyramidal-tiled OME-TIFF")
 
     args = parser.parse_args()
 
+    log_file = os.path.join(args.tiff_path, "error_log.txt")
+
     if os.path.isdir(args.tiff_path):
-        process_folder(args.tiff_path, args.pyramid, tuple(args.tile_size), args.levels)
+        process_folder(args.tiff_path, args.p, log_file)
     else:
-        if args.list_channels:
+        if args.c:
             list_channels(args.tiff_path)
+        elif args.f is not None:
+            channels = parse_channels(args.f) if args.f else None
+            subset_tiff(args.tiff_path, channels, args.p, log_file)
         else:
-            channels = parse_channels(args.channels) if args.channels else None
-            subset_tiff(args.tiff_path, channels, args.pyramid, tuple(args.tile_size), args.levels)
+            print("No action specified. Use -c to list channels, -f to filter and subset channels, or -p to create a pyramidal OME-TIFF.")
 
 if __name__ == "__main__":
     main()
