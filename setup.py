@@ -18,7 +18,7 @@ setup(
         'Operating System :: OS Independent',
     ],
     packages=find_packages(),
-    python_requires='>=3.11',
+    python_requires='>=3.10',
     install_requires=[
         'click',
         'numpy',
