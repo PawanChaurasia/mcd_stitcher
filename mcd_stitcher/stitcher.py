@@ -126,7 +126,7 @@ class ZarrStitcher:
 
                 # Check if the image is empty (shape is (1, 1, 1))
                 if image.shape == (1, 1, 1):
-                    print(f"Skipping empty ROI ID: {roi['roi_id']}")
+                    # print(f"Skipping empty ROI ID: {roi['roi_id']}")
                     continue
 
                 x_offset = int(roi['stage_x'] - min_x)
