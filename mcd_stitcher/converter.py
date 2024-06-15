@@ -6,9 +6,14 @@ import traceback
 from .imclib.imcraw import ImcRaw
 
 class Imc2Zarr:
-    def __init__(self, input_path, output_path):
+    def __init__(self, input_path, output_path=None):
         self.input_path = Path(input_path)
-        self.output_path = Path(output_path)
+        if self.input_path.is_file():
+            # If input is a file, set output path to the parent directory
+            self.output_path = Path(output_path) if output_path else self.input_path.parent / "Zarr_converted"
+        else:
+            # If input is a directory, use the directory directly
+            self.output_path = Path(output_path) if output_path else self.input_path / "Zarr_converted"
         self.output_fn = None
 
     def convert(self):
@@ -69,6 +74,9 @@ class Imc2Zarr:
         for imc_scan in imc_scans:
             imc_scan.close()
 
+        # Print conversion success message
+        print(f"{mcd_fn.name} converted successfully")
+
     def _convert2zarr(self, imc: ImcRaw):
         ds = xr.Dataset()
         # set meta for root
@@ -103,14 +111,14 @@ class Imc2Zarr:
         # save snapshots
         imc.save_snapshot_images(snapshots_path)
 
-def imc2zarr(input_path, output_path):
+def imc2zarr(input_path, output_path=None):
     imc2zarr_converter = Imc2Zarr(input_path, output_path)
     imc2zarr_converter.convert()
     return imc2zarr_converter.output_fn
 
 @click.command()
 @click.argument("input_path")
-@click.argument("output_path")
+@click.argument("output_path", required=False)
 def main(input_path, output_path):
     try:
         imc2zarr(input_path, output_path)
