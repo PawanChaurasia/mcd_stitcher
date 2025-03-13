@@ -134,7 +134,7 @@ A function that allows you to remove background channels, view all channels in a
 
 ## License
 
-This project is licensed under the MIT License. See the [LICENSE](https://github.com/PawanChaurasia/mcd_stitcher/blob/main/LICENSE) file for details.
+This project is licensed under the GNU General Public License v3.0 License. See the [LICENSE](https://github.com/PawanChaurasia/mcd_stitcher/blob/main/LICENSE) file for details.
 
 ## Issues
 
