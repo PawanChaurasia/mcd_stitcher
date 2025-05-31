@@ -1,6 +1,47 @@
 [build-system]
-requires = ["setuptools>=42", "wheel"]
+requires = ["setuptools>=61.0", "wheel"]
 build-backend = "setuptools.build_meta"
 
-[tox]
-isolated_build = true
+[project]
+name = "mcd_stitcher"
+version = "1.0.1"
+authors = [
+    {name = "Pawan Chaurasia", email = "pchaurasia98@gmail.com"},
+]
+description = "MCD to Zarr conversion and stitching"
+readme = "README.md"
+license = {text = "GPL-3.0"}
+requires-python = ">=3.10"
+classifiers = [
+    "Programming Language :: Python :: 3",
+    "License :: OSI Approved :: GNU General Public License v3 (GPLv3)",
+    "Operating System :: OS Independent",
+]
+keywords = ["imaging", "microscopy", "IMC", "stitching"]
+
+dependencies = [
+    'click',
+    'numpy',
+    'pandas',
+    'python_dateutil',
+    'xarray',
+    'zarr',
+    'scikit-image',
+    'xmltodict',
+    'tifffile==2025.1.10'
+]
+
+[project.urls]
+Homepage = "https://github.com/PawanChaurasia/mcd_stitcher"
+"Bug Tracker" = "https://github.com/PawanChaurasia/mcd_stitcher/issues"
+Repository = "https://github.com/PawanChaurasia/mcd_stitcher"
+
+[project.scripts]
+imc2zarr = "mcd_stitcher.converter:main"
+zarr_stitch = "mcd_stitcher.stitcher:main"
+mcd_stitch = "mcd_stitcher:main"
+tiff_subset = "mcd_stitcher.tiff_subset:main"
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["mcd_stitcher*"]
