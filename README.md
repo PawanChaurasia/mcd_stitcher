@@ -12,7 +12,9 @@ pip install mcd_stitcher
 
 ### Requirements
 
-The following dependencies will installed:
+Python 3.10 - 3.12
+
+The following packages will installed automatically:
 
 - `click`
 - `numpy`
@@ -21,6 +23,8 @@ The following dependencies will installed:
 - `xarray`
 - `zarr`
 - `scikit-image`
+- `tifffile`	
+- `xmltodict`
 
 ## Command Line Usage
 
@@ -84,7 +88,7 @@ Combines the MCD to Zarr conversion and Zarr stitching into a single command.
 **Command:** 
 
 ```
-tiff_subset <tiff_path> [-c] [-f CHANNELS] [-p]
+tiff_subset <tiff_path> [-c] [-p] [-f CHANNELS]
 ```
 
 **Description:**
@@ -93,10 +97,11 @@ A function that allows you to remove background channels, view all channels in a
 **Arguments:**
 - **tiff_path:** Path to the OME-TIFF file or directory containing OME-TIFF files.
 - **-c:** Lists all channels in the OME-TIFF file.
-- **-f CHANNELS:** Filters and subsets channels. Provide channels to subset, e.g., "0-5,7,10". If no channels are provided, default filtering is applied.
 - **-p:** Enables the creation of a pyramidal OME-TIFF with tiling.
+- **-f CHANNELS:** Filters and subsets channels. Provide channels to subset, e.g., "0-5,7,10". If no channels are provided, default filtering is applied. 
 
 **Notes:**
+- **Order of arguments:** The `-f` flag (if used) must be the last argument in the command.
 - **Default filtering:** Automatically subsets all channels for metals tags between 141 to 193.
 - **Pyramid and Tiling:** The hardcoded tile size is (256x256) and pyramid levels as 4.
 - Errors encountered during processing will be logged to `error_log.txt` in the input directory.
@@ -125,7 +130,7 @@ A function that allows you to remove background channels, view all channels in a
 
 4. **Subset Tiff files with Pyramid and Tile Generation:**
     ```
-    tiff_subset "path/to/file.ome.tiff" -f -p
+    tiff_subset "path/to/file.ome.tiff" -p -f	
     ```
 
 	**Notes:**
