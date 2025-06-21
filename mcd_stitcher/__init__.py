@@ -3,7 +3,7 @@ from pathlib import Path
 from .converter import Imc2Zarr, imc2zarr, main as converter_main
 from .stitcher import ZarrStitcher, main as stitcher_main
 
-__version__ = "1.0.2"
+__version__ = "1.1.0"
 
 def mcd_stitch(mcd_folder, zarr_folder=None, use_lzw=False):
     mcd_path = Path(mcd_folder)
