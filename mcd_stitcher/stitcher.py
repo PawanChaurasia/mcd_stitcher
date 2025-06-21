@@ -1,12 +1,17 @@
+# Standard library imports  
+import argparse  
+import os  
+from datetime import datetime  
+from pathlib import Path  
+from typing import Union  
+import concurrent.futures  
+
+# Third-party imports  
+import numpy as np  
+import tifffile  
+import xarray as xr  
+import xmltodict  
 import zarr
-import numpy as np
-from datetime import datetime
-from pathlib import Path
-import argparse
-import xarray as xr
-import tifffile
-import xmltodict
-from typing import Union
 
 class ZarrStitcher:
     def __init__(self, zarr_folder, use_lzw=False):
@@ -95,6 +100,8 @@ class ZarrStitcher:
 
     def stitch_rois(self, rois, output_path, main_channel_labels):
         """Stitch ROIs into a single image and save as OME-TIFF."""
+        
+        # Compute stitched image bounds
         min_x = min(roi['stage_x'] for roi in rois)
         min_y = min(roi['stage_y'] - roi['height'] for roi in rois)
         max_x = max(roi['stage_x'] + roi['width'] for roi in rois)
@@ -113,28 +120,37 @@ class ZarrStitcher:
             except Exception as e:
                 self.log_error(f"Error determining channels for ROI ID: {roi['roi_id']} in {roi['file_path']}, Error: {e}")
 
-        stitched_image = np.zeros((max_channels, stitched_height, stitched_width), dtype=np.uint16)
+        stitched_image = np.zeros((max_channels, stitched_height, stitched_width), dtype=np.float32)
 
         # Sort ROIs by timestamp in descending order
-        rois = sorted(rois, key=lambda r: self.convert_timestamp_to_simple_format(r['timestamp']), reverse=True)
+        rois_sorted = sorted(rois, key=lambda r: self.convert_timestamp_to_simple_format(r['timestamp']), reverse=True)
 
-        for roi in rois:
-            try:
-                zarr_group = zarr.open(roi['file_path'], mode='r')
-                image_key = list(zarr_group.keys())[0]
-                image = zarr_group[image_key][:]  # Load all channels
-
-                # Check if the image is empty (shape is (1, 1, 1))
-                if image.shape == (1, 1, 1):
-                    # print(f"Skipping empty ROI ID: {roi['roi_id']}")
-                    continue
-
-                x_offset = int(roi['stage_x'] - min_x)
-                y_offset = abs(int(roi['stage_y'] - max_y))
-                
-                stitched_image[:, y_offset:y_offset + image.shape[1], x_offset:x_offset + image.shape[2]] = image
-            except Exception as e:
-                self.log_error(f"Error processing ROI ID: {roi['roi_id']} in {roi['file_path']}, Error: {e}")
+        def load_and_prepare(roi):  
+            try:  
+                zarr_group = zarr.open(roi['file_path'], mode='r')  
+                image_key = list(zarr_group.keys())[0]  
+                image = zarr_group[image_key][:]  
+                if image.shape == (1, 1, 1):  
+                    self.log_error(f"Skipping empty ROI ID: {roi['roi_id']} in {roi['file_path']}")
+                    return None  # skip empty  
+                x_offset = int(roi['stage_x'] - min_x)  
+                y_offset = abs(int(roi['stage_y'] - max_y))  
+                return (image, x_offset, y_offset, roi['roi_id'])  
+            except Exception as e:  
+                self.log_error(f"Error processing ROI ID: {roi['roi_id']} in {roi['file_path']}, Error: {e}")  
+                return None
+        
+        cpu_threads = max(1, os.cpu_count() - 1)  # Number of cores to use for parallel processing
+        
+        # Parallel loading and placement  
+        with concurrent.futures.ThreadPoolExecutor(max_workers=cpu_threads) as executor:  
+            results = list(executor.map(load_and_prepare, rois_sorted))
+        
+        for result in results:  
+            if result is None:  
+                continue  
+            image, x_offset, y_offset, roi_id = result  
+            stitched_image[:, y_offset:y_offset + image.shape[1], x_offset:x_offset + image.shape[2]] = image
 
         # Convert to xarray DataArray to use the write_ometiff function
         stitched_da = xr.DataArray(
@@ -172,7 +188,7 @@ class ZarrStitcher:
                         SizeZ="1"
                         PhysicalSizeX="1.0"
                         PhysicalSizeY="1.0"
-                        Type="uint16">
+                        Type="float32">
                     <TiffData />
                     {channels_xml}
                 </Pixels>
