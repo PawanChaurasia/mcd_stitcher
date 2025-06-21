@@ -127,7 +127,7 @@ class ZarrStitcher:
 
         def load_and_prepare(roi):  
             try:  
-                zarr_group = zarr.open(roi['file_path'], mode='r')  
+                zarr_group = zarr.open(roi['file_path'], mode='r')
                 image_key = list(zarr_group.keys())[0]  
                 image = zarr_group[image_key][:]  
                 if image.shape == (1, 1, 1):  
@@ -199,10 +199,10 @@ class ZarrStitcher:
         # Note resolution: 1 um/px = 25400 px/inch
         if self.use_lzw:
             tifffile.imwrite(outpath, data=imarr.values, description=xml, contiguous=True,
-                            compression='lzw', resolution=(25400, 25400, "inch"), **kwargs)
+                            compression='lzw', resolution=(25400, 25400), resolutionunit="inch", **kwargs)
         else:
             tifffile.imwrite(outpath, data=imarr.values, description=xml, contiguous=True,
-                            resolution=(25400, 25400, "inch"), **kwargs)
+                            resolution=(25400, 25400), resolutionunit="inch", **kwargs)
 
     def process_all_folders(self):
         """Process all Zarr folders."""
