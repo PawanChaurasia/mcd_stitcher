@@ -120,7 +120,7 @@ class ZarrStitcher:
             except Exception as e:
                 self.log_error(f"Error determining channels for ROI ID: {roi['roi_id']} in {roi['file_path']}, Error: {e}")
 
-        stitched_image = np.zeros((max_channels, stitched_height, stitched_width), dtype=np.float32)
+        stitched_image = np.zeros((max_channels, stitched_height, stitched_width), dtype=np.uint16)
 
         # Sort ROIs by timestamp in descending order
         rois_sorted = sorted(rois, key=lambda r: self.convert_timestamp_to_simple_format(r['timestamp']), reverse=True)
@@ -188,7 +188,7 @@ class ZarrStitcher:
                         SizeZ="1"
                         PhysicalSizeX="1.0"
                         PhysicalSizeY="1.0"
-                        Type="float32">
+                        Type="uint16">
                     <TiffData />
                     {channels_xml}
                 </Pixels>
@@ -263,3 +263,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+
