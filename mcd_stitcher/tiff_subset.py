@@ -41,7 +41,7 @@ def write_ome_tiff(image_data: np.ndarray, channel_names: List[str], output_path
                     SizeZ="1"
                     PhysicalSizeX="1.0"
                     PhysicalSizeY="1.0"
-                    Type="float32">
+                    Type="uint16">
                 <TiffData />
                 {channels_xml}
             </Pixels>
@@ -160,3 +160,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+
