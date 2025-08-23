@@ -4,7 +4,7 @@ import click
 from .converter import Imc2Zarr, imc2zarr, main as converter_main
 from .stitcher import ZarrStitcher, main as stitcher_main
 
-__version__ = "1.2"
+__version__ = "1.1.1"
 
 logging.basicConfig(level=logging.INFO, format='%(levelname)s: %(message)s')
 logger = logging.getLogger(__name__)
