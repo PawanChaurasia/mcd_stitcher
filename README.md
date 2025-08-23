@@ -12,7 +12,7 @@ pip install mcd_stitcher
 
 ### Requirements
 
-Python 3.11
+Python >3.11
 
 The following packages will installed automatically:
 
