@@ -348,6 +348,9 @@ def main():
             # Channel filtering mode
             channels = parse_channels(args.f) if args.f else None
             subset_tiff(args.tiff_path, channels, args.p, log_file)
+        elif args.p:  
+            # Pyramid-only mode (no filtering)  
+            subset_tiff(args.tiff_path, None, args.p, log_file)
         else:
             # No operation specified - show help
             print("No action specified. Use -c to list channels, -f to filter and subset channels, or -p to create a pyramidal OME-TIFF.")
@@ -355,3 +358,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+
