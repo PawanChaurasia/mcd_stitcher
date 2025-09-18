@@ -1,7 +1,7 @@
 # Project Wishlist  
 
 ## 🔨 Current Features / Actively Worked On  
-- **ROI-by-ROI conversion of MCD files to OME-TIFF format (non-stitched output)**  
+- **ROI-by-ROI conversion of MCD files to OME-TIFF format (non-stitched output)**  Published - 18/9/25
 
 ## 📅 Future Features / Planning Phase  
 - **Migration from Zarr v2 to Zarr v3 for improved compatibility and performance**  
