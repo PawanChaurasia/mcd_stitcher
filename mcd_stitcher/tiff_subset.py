@@ -1,18 +1,18 @@
 """
-OME-TIFF Channel Subsetting Tool - Development Version
-
 This tool processes OME-TIFF files to extract specific channels, with support for:
+Supports processing both:
 - Channel listing and inspection
+- Stitched TIFFs created via `mcd_stitch`
 - Metal channel filtering (mass cytometry data)
+- ROI TIFFs exported from Zarr via `mcd_convert -> zarr2tiff`
 - Custom channel selection
 - Pyramidal TIFF generation for large images
-- Batch processing of directories
 
-Key Features:
-- Preserves OME-XML metadata during channel subsetting
-- Automatic metal channel detection (mass range 141-194)
-- Multi-resolution pyramid generation for visualization
-- Robust error handling with detailed logging
+Main capabilities:
+- List channel names from OME metadata
+- Subset TIFFs by channel indices
+- Create pyramidal OME-TIFF outputs
+- Batch process directories
 """
 
 import argparse
@@ -21,37 +21,27 @@ import tifffile
 import numpy as np
 import xml.etree.ElementTree as ET
 from typing import List, Union
-from pathlib import Path
 import traceback
 from datetime import datetime
+from pathlib import Path
 
 
-def read_ome_tiff(tiff_path: str) -> [np.ndarray, List[str]]:
+# --------------------------
+# Metadata & IO utilities
+# --------------------------
+
+def read_ome_tiff(tiff_path: str) -> (np.ndarray, List[str]):
     """
-    Read OME-TIFF file and extract image data with channel metadata.
-    
-    Parses the OME-XML metadata to extract channel names, which are essential
-    for maintaining proper channel identification during subsetting operations.
-    
-    Args:
-        tiff_path: Path to the OME-TIFF file
-        
-    Returns:
-        List of (image_data, channel_names) where:
-        - image_data: numpy array with shape (channels, height, width)
-        - channel_names: list of channel names from OME metadata
-        
-    Raises:
-        Exception: If file cannot be read or OME metadata is invalid
+    Read TIFF pixel data + extract channel names from OME-XML metadata.
     """
     with tifffile.TiffFile(tiff_path) as tif:
-        # Load the full image stack
         image_data = tif.asarray()
-        # Extract OME-XML metadata string
         ome_metadata = tif.ome_metadata
 
-    # Parse OME-XML to extract channel information
-    # Uses standard OME namespace for compatibility
+    if ome_metadata is None:
+        raise ValueError(f"No OME-XML metadata found in {tiff_path}.")
+
+    # Parse XML and extract channel names
     root = ET.fromstring(ome_metadata)
     namespace = {'ome': 'http://www.openmicroscopy.org/Schemas/OME/2016-06'}
     channel_elements = root.findall('.//ome:Channel', namespace)
@@ -60,35 +50,22 @@ def read_ome_tiff(tiff_path: str) -> [np.ndarray, List[str]]:
     return image_data, channel_names
 
 
-def write_ome_tiff(image_data: np.ndarray, channel_names: List[str], output_path: str):
+def generate_ome_xml(image_data: np.ndarray, channel_names: List[str], base_name: str) -> str:
     """
-    Write image data to OME-TIFF format with proper metadata.
-    
-    Generates compliant OME-XML metadata that preserves channel information
-    and spatial/dimensional properties. Critical for maintaining compatibility
-    with imaging software like ImageJ, QuPath, and CellProfiler.
-    
-    Args:
-        image_data: numpy array with shape (channels, height, width)
-        channel_names: list of channel names to embed in metadata
-        output_path: destination file path
+    Build a minimal OME-XML header string given image shape and channels.
     """
-    # Generate channel XML elements for OME metadata
-    # Each channel needs unique ID and proper attributes
     channels_xml = ''.join([
-        f'<Channel ID="Channel:0:{i}" Name="{name}" SamplesPerPixel="1"/>' 
+        f'<Channel ID="Channel:0:{i}" Name="{name}" SamplesPerPixel="1"/>'
         for i, name in enumerate(channel_names)
     ])
-    
-    # Create complete OME-XML metadata following schema specification
-    # Physical sizes set to 1.0 (micrometers assumed) - can be customized
+
     xml_metadata = f"""<?xml version="1.0" encoding="UTF-8"?>
     <OME xmlns="http://www.openmicroscopy.org/Schemas/OME/2016-06"
-        xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
-        xsi:schemaLocation="http://www.openmicroscopy.org/Schemas/OME/2016-06 http://www.openmicroscopy.org/Schemas/OME/2016-06/ome.xsd">
-        <Image ID="Image:0" Name="{os.path.basename(output_path)}">
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://www.openmicroscopy.org/Schemas/OME/2016-06 http://www.openmicroscopy.org/Schemas/OME/2016-06/ome.xsd">
+        <Image ID="Image:0" Name="{base_name}">
             <Pixels BigEndian="false"
-                    DimensionOrder="XYZCT"
+                    DimensionOrder="XYCZT"
                     ID="Pixels:0"
                     Interleaved="false"
                     SizeC="{len(channel_names)}"
@@ -98,88 +75,70 @@ def write_ome_tiff(image_data: np.ndarray, channel_names: List[str], output_path
                     SizeZ="1"
                     PhysicalSizeX="1.0"
                     PhysicalSizeY="1.0"
-                    Type="uint16">
+                    Type="{image_data.dtype}">
                 <TiffData />
                 {channels_xml}
             </Pixels>
         </Image>
     </OME>"""
-    
-    # Write with proper axis metadata for software compatibility
-    tifffile.imwrite(output_path, image_data, description=xml_metadata, metadata={'axes': 'CYX'})
+    return xml_metadata
 
+
+def write_ome_tiff(image_data: np.ndarray, channel_names: List[str], output_path: str):
+    """
+    Write a simple OME-TIFF with given channel subset.
+    """
+    ome_xml = generate_ome_xml(image_data, channel_names, os.path.basename(output_path))
+    tifffile.imwrite(output_path, image_data, description=ome_xml, metadata={'axes': 'CYX'})
+
+
+# --------------------------
+# Pyramid utilities
+# --------------------------
 
 def create_pyramid(image, levels=4):
     """
-    Create multi-resolution pyramid for large image visualization.
-    
-    Generates downsampled versions of the image at different scales (2x, 4x, 8x, etc.)
-    This enables efficient viewing and navigation in imaging software, especially
-    important for large mass cytometry datasets.
-    
-    Args:
-        image: numpy array with shape (channels, height, width)
-        levels: number of pyramid levels to generate
-        
-    Returns:
-        List of numpy arrays, each representing a pyramid level
+    Create a simple downsampled image pyramid (factor of 2 at each level).
     """
-    pyramid = [image]  # Level 0 is the original full-resolution image
-    
+    pyramid = [image]
     for level in range(1, levels):
-        scale = 2 ** level  # 2x, 4x, 8x downsampling
-        # Downsample by taking every nth pixel (simple but fast)
+        scale = 2 ** level
         downsampled = image[:, ::scale, ::scale]
         pyramid.append(downsampled)
-    
     return pyramid
 
 
 def write_pyramidal_tiff(image_data: np.ndarray, channel_names: List[str], output_path: str):
     """
-    Write multi-resolution pyramidal TIFF for efficient large image handling.
-    
-    Creates a tiled, pyramidal TIFF structure that allows viewers to load
-    only the resolution level needed for the current zoom level. Essential
-    for large mass cytometry images that may be several GB in size.
-    
-    Args:
-        image_data: numpy array with shape (channels, height, width)
-        channel_names: list of channel names for metadata
-        output_path: destination file path
+    Write a tiled pyramid OME-TIFF (multi-resolution).
     """
-    tile_size = (256, 256)  # Standard tile size for efficient access
-    levels = 4  # Number of pyramid levels
-
-    # Generate all pyramid levels
+    tile_size = (256, 256)
+    levels = 4
+    
     pyramid_levels = create_pyramid(image_data, levels=levels)
     
-    # Use BigTIFF format for files >4GB
     with tifffile.TiffWriter(output_path, bigtiff=True) as tif:
-        # Common options for all pyramid levels
-        options = dict(
-            tile=tile_size, 
-            metadata={'axes': 'CYX', 'Channel': {'Name': channel_names}}
-        )
+        options = dict(tile=tile_size, metadata={'axes': 'CYX'})
+        ome_xml = generate_ome_xml(image_data, channel_names, os.path.basename(output_path))
 
-        for level, img in enumerate(pyramid_levels):
-            if level == 0:
-                # Base level with SubIFDs for pyramid structure
-                tif.write(img, subifds=levels-1, **options)
+        for i, level_data in enumerate(pyramid_levels):
+            if i == 0:
+                # Base level with embedded OME-XML + sub-IFDs for other levels
+                tif.write(level_data, subifds=levels - 1, description=ome_xml, **options)
             else:
-                # Pyramid levels marked as reduced resolution
-                tif.write(img, subfiletype=1, **options)
+                # Reduced-resolution levels
+                tif.write(level_data, subfiletype=1, **options)
 
+
+# --------------------------
+# Channel handling
+# --------------------------
 
 def list_channels(tiff_path: str):
     """
-    Display all available channels in the OME-TIFF file.
-    
-    Useful for inspecting channel content before subsetting, especially
-    important for mass cytometry data where channel names indicate
-    the measured proteins/markers.
+    Utility to quickly list all channel names in a TIFF.
     """
-    image_data, channel_names = read_ome_tiff(tiff_path)
+    _, channel_names = read_ome_tiff(tiff_path)
     print(f"Channels in {tiff_path}:")
     for idx, name in enumerate(channel_names):
         print(f"Channel {idx}: {name}")
@@ -187,175 +146,182 @@ def list_channels(tiff_path: str):
 
 def parse_channels(channel_str: str) -> List[int]:
     """
-    Parse channel specification string into list of channel indices.
-    
-    Supports flexible channel selection syntax:
-    - Individual channels: "1,3,5"
-    - Ranges: "0-10"
-    - Mixed: "0-5,7,10-15"
-    
-    Args:
-        channel_str: comma-separated channel specification
-        
-    Returns:
-        List of channel indices (0-based)
-        
-    Example:
-        parse_channels("0-2,5,7-9") -> [0, 1, 2, 5, 7, 8, 9]
+    Parse CLI input like "0-5,7,10" into a list of channel indices.
     """
     channels = []
+    if not channel_str:
+        return channels
     for part in channel_str.split(','):
+        part = part.strip()
         if '-' in part:
-            # Handle range specification (e.g., "0-5")
             start, end = map(int, part.split('-'))
             channels.extend(range(start, end + 1))
         else:
-            # Handle individual channel (e.g., "7")
             channels.append(int(part))
     return channels
 
 
-def subset_tiff(tiff_path: str, channels: Union[List[int], None], pyramid: bool, log_file: str):
+# --------------------------
+# Subsetting
+# --------------------------
+
+def subset_tiff(tiff_path: str, filter_str: Union[str, None], pyramid: bool, log_file: str, root_path: str = None):
     """
-    Main processing function to subset channels from OME-TIFF file.
-    
-    Handles the complete workflow:
-    1. Load original OME-TIFF with metadata
-    2. Apply channel filtering (custom or default metal detection)
-    3. Generate output filename based on processing options
-    4. Write filtered data in requested format (regular or pyramidal)
-    5. Log any errors for debugging
-    
-    Args:
-        tiff_path: path to input OME-TIFF file
-        channels: list of channel indices to keep (None for auto-detection)
-        pyramid: whether to create pyramidal output
-        log_file: path for error logging
+    Subset a single TIFF by channel list and/or write pyramid.
+    Saves new OME-TIFF with suffix (_filtered, _pyramid).
     """
     try:
-        # Load the original image and metadata
+        # Print relative path if root folder is given
+        if root_path:
+            rel_path = os.path.relpath(tiff_path, root_path)
+            print(f"Processing {rel_path}...")
+        else:
+            print(f"Processing {tiff_path}...")
+            
         image_data, channel_names = read_ome_tiff(tiff_path)
         
-        # Apply channel filtering logic
-        if channels is None:
-            # Auto-detect metal channels for mass cytometry data
-            # Looks for channels containing mass numbers 141-194 (typical metal range)
-            channels = [i for i, name in enumerate(channel_names) if
-                        any(metal in name for metal in [f"{i}" for i in range(141, 194)])]
-        
-        # Extract the requested channels and their metadata
-        subset_image_data = image_data[channels, :, :]
-        subset_channel_names = [channel_names[i] for i in channels]
+        # Select channels
+        if filter_str is None:
+            selected_channels = list(range(len(channel_names)))   # default: all
+        elif filter_str == '':
+            # Default filter mode (metal channels only, 141–193)
+            selected_channels = [
+                i for i, name in enumerate(channel_names)
+                if any(metal in name for metal in [f"{i}" for i in range(141, 194)])
+            ]
+        else:
+            selected_channels = parse_channels(filter_str)
 
-        # Generate appropriate output filename
-        base, ext = os.path.splitext(tiff_path)
-        output_path = f"{base}_filtered.ome.tiff"
+        # Validate channels
+        max_channel_idx = len(channel_names) - 1
+        valid_channels = [c for c in selected_channels if 0 <= c <= max_channel_idx]
+        invalid_channels = [c for c in selected_channels if c not in valid_channels]
+        if invalid_channels:
+            print(f"Warning: Skipping invalid channel indices {invalid_channels} (max index = {max_channel_idx}).")
+
+        if not valid_channels:
+            print(f"No valid channels to process for {tiff_path}. Skipping.")
+            return
         
+        # Subset image & metadata
+        subset_image_data = image_data[valid_channels, :, :]
+        subset_channel_names = [channel_names[i] for i in valid_channels]
+
+        # Build output filename
+        base, _ = os.path.splitext(tiff_path)
+        if base.endswith('.ome'):
+            base = os.path.splitext(base)[0]
+        
+        suffix = "_filtered" if filter_str is not None else ""
         if pyramid:
-            output_path = f"{base}_filtered_pyramid.ome.tiff"
-            # Create multi-resolution pyramidal TIFF
+            suffix += "_pyramid"
+        
+        output_path = f"{base}{suffix}.ome.tiff"
+        
+        # Write output
+        if pyramid:
             write_pyramidal_tiff(subset_image_data, subset_channel_names, output_path)
         else:
-            # Create standard OME-TIFF
             write_ome_tiff(subset_image_data, subset_channel_names, output_path)
         
-        print(f"OME-TIFF file written to {output_path}")
-        
+        if root_path:
+            rel_output = os.path.relpath(output_path, root_path)
+            print(f"✅ Successfully wrote {rel_output}")
+        else:
+            print(f"✅ Successfully wrote {output_path}")
+
     except Exception as e:
-        # Comprehensive error logging for debugging
+        # Log errors to a timestamped file, continue batch
         timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        error_message = f"{timestamp} - Error processing {tiff_path}: {str(e)}\n{traceback.format_exc()}\n"
         with open(log_file, 'a') as log:
-            log.write(f"{timestamp} - Error processing {tiff_path}: {str(e)}\n")
-            log.write(traceback.format_exc() + '\n')
-        print(f"{timestamp} - Error processing {tiff_path}. Logged the error and continuing...")
+            log.write(error_message)
+        print(f"{timestamp} - ❌ Error processing {tiff_path}. See log for details. Continuing...")
 
 
-def process_folder(folder_path: str, pyramid: bool, log_file: str):
+# --------------------------
+# Batch processing
+# --------------------------
+
+def snapshot_tiff_files(folder_path: str) -> List[Path]:
     """
-    Batch process all OME-TIFF files in a directory tree.
-    
-    Recursively searches for TIFF files and applies default metal channel
-    filtering to each. Useful for processing entire experiments or datasets
-    with consistent channel filtering needs.
-    
-    Args:
-        folder_path: root directory to search for TIFF files
-        pyramid: whether to create pyramidal outputs
-        log_file: path for error logging
+    Snapshot all TIFFs in a folder tree so we don't pick up files written mid-run.
     """
-    # Walk through all subdirectories
-    for root, dirs, files in os.walk(folder_path):
-        for file in files:
-            # Process both .tiff and .ome.tiff extensions
-            if file.endswith('.tiff') or file.endswith('.ome.tiff'):
-                # Apply default filtering (None triggers metal detection)
-                subset_tiff(os.path.join(root, file), None, pyramid, log_file)
+    folder_path = Path(folder_path)
+    return [
+        f for f in folder_path.rglob("*")
+        if f.is_file() and f.suffix.lower() in (".tiff", ".ome.tiff")
+    ]
 
+
+def process_folder(folder_path: str, filter_str: Union[str, None], pyramid: bool, log_file: str):
+    """
+    Process all TIFF files in a directory (non-recursive by snapshot).
+    """
+    files_to_process = snapshot_tiff_files(folder_path)
+    
+    if not files_to_process:
+        print("No TIFF files found to process.")
+        return
+    
+    print(f"Found {len(files_to_process)} TIFF files to process.\n")
+    
+    for tiff_file in files_to_process:
+        subset_tiff(str(tiff_file), filter_str, pyramid, log_file, folder_path)
+
+
+# --------------------------
+# CLI entrypoint
+# --------------------------
 
 def main():
-    """
-    Command-line interface for OME-TIFF channel subsetting.
-    
-    Provides flexible options for different use cases:
-    - Single file or batch directory processing
-    - Channel inspection or filtering
-    - Regular or pyramidal output formats
-    """
     parser = argparse.ArgumentParser(description="""
-    Subset OME-TIFF files by extracting specific channels.
-    
-    This tool is designed for mass cytometry data processing, with automatic
-    detection of metal channels (mass 141-194) and support for large image
-    pyramidal formats for efficient visualization.
+    Process and subset OME-TIFF files.
 
-    For more information on command usage, visit:
-    https://github.com/PawanChaurasia/mcd_stitcher
+    Supports:
+    - Flat structure: stitched TIFFs from mcd_stitch
+    - Nested structure: per-ROI TIFFs from mcd_convert -> zarr2tiff
+
+    Examples:
+    - List channels:           python tiff_subset.py file.ome.tiff -c
+    - Keep all channels:       python tiff_subset.py file.ome.tiff -f
+    - Subset specific:         python tiff_subset.py file.ome.tiff -f "0-5,7,10"
+    - Create pyramids:         python tiff_subset.py folder/ -p
+    - Combine filter+pyramid:  python tiff_subset.py folder/ -f "0-10" -p
     """)
-    
-    # Positional argument for input path
-    parser.add_argument("tiff_path", type=str, 
-                       help="Path to the OME-TIFF file or directory containing TIFF files.")
-    
-    # Optional flags for different operations
-    parser.add_argument("-c", action="store_true", 
-                       help="List all channels in the OME-TIFF file with their indices.")
-    
-    parser.add_argument("-f", type=str, nargs='?', const='', 
-                       help="Filter and subset channels. Provide channel specification "
-                            "(e.g., '0-5,7,10') or leave empty for automatic metal channel detection.")
-    
-    parser.add_argument("-p", action="store_true", 
-                       help="Create pyramidal-tiled OME-TIFF for efficient large image viewing.")
+    parser.add_argument("tiff_path", type=str, help="Path to an OME-TIFF file OR a directory of OME-TIFFs.")
+    parser.add_argument("-c", "--list_channels", action="store_true", help="List channels in the specified file (file only).")
+    parser.add_argument("-f", "--filter", type=str, nargs='?', const='', default=None,
+                        help="Filter channels: comma list (e.g. '0-5,7,10'). "
+                             "If flag present but empty, defaults to metal channels (141–193).")
+    parser.add_argument("-p", "--pyramid", action="store_true", help="Create a pyramidal (tiled) OME-TIFF output.")
 
     args = parser.parse_args()
 
-    # Set up error logging in the same directory as input
-    if os.path.isdir(args.tiff_path):
-        log_file = os.path.join(args.tiff_path, "error_log.txt")
-    else:
-        log_file = os.path.join(os.path.dirname(args.tiff_path), "error_log.txt")
+    is_file = os.path.isfile(args.tiff_path)
 
-    # Route to appropriate processing function based on input type
-    if os.path.isdir(args.tiff_path):
-        # Batch processing mode
-        process_folder(args.tiff_path, args.p, log_file)
+    # Channel listing mode
+    if args.list_channels:
+        if not is_file:
+            print("Error: --list_channels only valid for a single TIFF file.")
+            return
+        list_channels(args.tiff_path)
+        return
+
+    # Safety: if no filter nor pyramid → nothing to do
+    if args.filter is None and not args.pyramid:
+        parser.print_help()
+        print("\nError: No action specified. Use -f to filter and/or -p to create pyramids.")
+        return
+
+    # Do work
+    if is_file:
+        log_file = os.path.join(os.path.dirname(args.tiff_path), "Tiff-subset_error_log.txt")
+        subset_tiff(args.tiff_path, args.filter, args.pyramid, log_file)
     else:
-        # Single file processing mode
-        if args.c:
-            # Channel listing mode
-            list_channels(args.tiff_path)
-        elif args.f is not None:
-            # Channel filtering mode
-            channels = parse_channels(args.f) if args.f else None
-            subset_tiff(args.tiff_path, channels, args.p, log_file)
-        elif args.p:  
-            # Pyramid-only mode (no filtering)  
-            subset_tiff(args.tiff_path, None, args.p, log_file)
-        else:
-            # No operation specified - show help
-            print("No action specified. Use -c to list channels, -f to filter and subset channels, or -p to create a pyramidal OME-TIFF.")
+        log_file = os.path.join(args.tiff_path, "Tiff-subset_error_log.txt")
+        process_folder(args.tiff_path, args.filter, args.pyramid, log_file)
 
 
 if __name__ == "__main__":
     main()
-
