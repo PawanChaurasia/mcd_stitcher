@@ -195,7 +195,7 @@ def main():
     args = parser.parse_args()
 
     is_file = os.path.isfile(args.tiff_path)
-)
+
     if args.list_channels:
         if not is_file:
             print("Error: -c/--list_channels can only be used with a single file.")
@@ -218,3 +218,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+
