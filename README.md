@@ -1,6 +1,6 @@
 # MCD STITCHER
 
-A package made for stitching ROIs into OME-TIFFS and additional OME-TIFF editing tools
+A package made to simplify converting Imaging Mass Cytometry (IMC) data into OME‑TIFF, stitching ROIs, and performing additional OME‑TIFF editing tasks.
 
 ## Installation
 
@@ -47,7 +47,22 @@ Converts MCD files to Zarr format.
 - The Zarr output folders are named after the MCD file names.
 - Progress and errors will be printed to the console for better monitoring.
 
-### 2. ZARR_STITCH
+### 2. ZARR2TIFF
+ 
+**Command:**
+```  
+zarr2tiff <zarr_folder> [<tiff_folder>] [--lzw]  
+```  
+ 
+**Description:**
+Exports individual ROIs from Zarr datasets into standalone OME‑TIFF files.
+
+**Arguments:**
+- **zarr_folder:** The folder containing Zarr data to be exported.
+- **tiff_folder:** (Optional) Destination directory for output TIFFs. Defaults to `<zarr_folder>/../TIFF_converted`.
+- **--lzw:** Optional flag to enable LZW compression. 
+
+### 3. ZARR_STITCH
 
 **Command:** 
 
@@ -65,9 +80,8 @@ Stitches Zarr files into a multi-channeled OME-TIFF.
 - The `<zarr_folder>` should only contain folders with Zarr data. Empty or unexpected folder structures will be skipped.
 - Errors encountered during processing will be logged to `error_log.txt` in the input directory.
 - The output files will have `_stitched.ome.tiff` appended to the original filename.
-- Success messages will be printed for each processed folder.
 
-### 3. MCD_STITCH
+### 4. MCD_STITCH
 
 **Command:** 
 
@@ -83,7 +97,21 @@ Combines the MCD to Zarr conversion and Zarr stitching into a single command.
 - **zarr_folder:** (Optional) Storage location of converted MCD files in Zarr format and the starting point for stitching Zarr files. If not provided, the output folder `<mcd_folder>/Zarr_converted` will be automatically created.
 - **--lzw:** Optional flag to enable LZW compression.
 
-### 4. TIFF_SUBSET
+### 5. MCD_CONVERT
+
+**Command:** 
+```  
+mcd_convert <mcd_folder> [--lzw]  
+```  
+
+**Description:** 
+Combines the MCD to Zarr conversion and Zarr to single ROI OME-TIFFs.
+
+**Arguments:**
+- **mcd_folder:** Root folder containing IMC `.mcd` files.
+- **--lzw:** Optional flag to enable LZW compression.
+
+### 6. TIFF_SUBSET
 
 **Command:** 
 
@@ -118,7 +146,7 @@ A function that allows you to remove background channels, view all channels in a
     ```
     - Other possible combinations: "1,6,20" or "5,6-10,55,60"
 
-3. **Subset all TIFF files in a directory:**
+3. **Subset all TIFF files in a directory and sub-directories:**
     ```
     tiff_subset "path/to/directory" -f
     ```
@@ -136,6 +164,8 @@ A function that allows you to remove background channels, view all channels in a
 	**Notes:**
 	- This will create a pyramidal OME-TIFF with default filtering.
 	- The output files will have `_filtered_pyramid.ome.tiff` appended to the original filename.
+	- -p can be used on it own to convert non-pyramid OME.TIFF to pyramid OME-TIFF file.
+	
 
 ## License
 
