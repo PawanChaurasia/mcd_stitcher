@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "mcd_stitcher"
-version = "1.1.1"
+version = "1.1.2"
 authors = [
     {name = "Pawan Chaurasia", email = "pchaurasia98@gmail.com"},
 ]
@@ -37,9 +37,11 @@ Homepage = "https://github.com/PawanChaurasia/mcd_stitcher"
 Repository = "https://github.com/PawanChaurasia/mcd_stitcher"
 
 [project.scripts]
-imc2zarr = "mcd_stitcher.converter:main"
-zarr_stitch = "mcd_stitcher.stitcher:main"
-mcd_stitch = "mcd_stitcher:main"
+imc2zarr = "mcd_stitcher.mcd2zarr_converter:main"
+zarr_stitch = "mcd_stitcher.zarr_stitcher:main"
+mcd_stitch = mcd_stitcher:stitch_cli
+zarr2tiff = "mcd_stitcher.zarr2tiff:main"
+mcd_convert = mcd_stitcher:convert_cli
 tiff_subset = "mcd_stitcher.tiff_subset:main"
 
 [tool.setuptools.packages.find]
