@@ -18,7 +18,7 @@ from .mcd2zarr_converter import Imc2Zarr, imc2zarr, main as mcd2zarr_main
 from .zarr_stitcher import ZarrStitcher, main as stitcher_main
 from .zarr2tiff import zarr2tiff, main as zarr2tiff_main
 
-__version__ = "1.1.2"
+__version__ = "1.1.2.post1"
 
 # Default logging configuration (INFO level by default)
 logging.basicConfig(level=logging.INFO, format='%(levelname)s: %(message)s')
@@ -29,7 +29,7 @@ logger = logging.getLogger(__name__)
 # Core Python API — can be imported and used programmatically
 # ----------------------------------------------------------------------
 
-def mcd_stitch(mcd_folder, zarr_folder=None, use_lzw=False):
+def mcd_stitch(mcd_folder, zarr_folder=None, stitch_folder=None, use_lzw=False):
     """
     Convert MCD files to Zarr and stitch them together.
 
@@ -49,16 +49,21 @@ def mcd_stitch(mcd_folder, zarr_folder=None, use_lzw=False):
     # Default output Zarr path if none is given
     if not zarr_folder:
         zarr_folder = mcd_path.parent / "Zarr_converted" if mcd_path.is_file() else mcd_path / "Zarr_converted"
+
+    # Default output Stitch path if none is given
+    if not stitch_folder:
+        stitch_folder = mcd_path.parent / "Zarr_stitched" if mcd_path.is_file() else mcd_path / "Zarr_stitched"
     
     logger.info(f"Converting MCD files from: {mcd_folder}")
     logger.info(f"Output Zarr folder: {zarr_folder}")
+    logger.info(f"Output Stitched folder: {stitch_folder}")
     
     # Step 1: MCD → Zarr
     imc2zarr(mcd_folder, zarr_folder)
     logger.info("MCD to Zarr conversion completed")
 
     # Step 2: Zarr stitching
-    stitcher = ZarrStitcher(zarr_folder, use_lzw=use_lzw)
+    stitcher = ZarrStitcher(zarr_folder, stitch_folder, use_lzw=use_lzw)
     stitcher.process_all_folders()
     logger.info("Zarr stitching completed")
 
@@ -110,19 +115,20 @@ def mcd_convert(mcd_folder, zarr_folder=None, tiff_folder=None, use_lzw=False):
 @click.command(context_settings=dict(help_option_names=['-h', '--help']))
 @click.argument("mcd_folder", type=click.Path(exists=True, path_type=Path))
 @click.argument("zarr_folder", type=click.Path(path_type=Path), required=False)
+@click.argument("stitch_folder", type=click.Path(path_type=Path), required=False)
 @click.option("--lzw", is_flag=True, help="Enable LZW compression for stitched output")
 @click.option("--verbose", "-v", is_flag=True, help="Enable verbose logging")
-def stitch_cli(mcd_folder, zarr_folder, lzw, verbose):
+def stitch_cli(mcd_folder, zarr_folder, stitch_folder, lzw, verbose):
     """
     CLI command: mcd_stitch
 
     Usage:
-        mcd_stitch <mcd_folder> [zarr_folder] [--lzw] [-v]
+        mcd_stitch <mcd_folder> [zarr_folder] [stitch_folder] [--lzw] [-v]
     """
     if verbose:
         logging.getLogger().setLevel(logging.DEBUG)
     try:
-        mcd_stitch(str(mcd_folder), str(zarr_folder) if zarr_folder else None, use_lzw=lzw)
+        mcd_stitch(str(mcd_folder), str(zarr_folder) if zarr_folder else None, str(stitch_folder) if stitch_folder else None, use_lzw=lzw)
         click.echo(click.style("Stitching completed successfully!", fg="green"))
     except Exception as e:
         if verbose:
