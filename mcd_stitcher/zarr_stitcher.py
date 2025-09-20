@@ -37,12 +37,13 @@ class ZarrStitcher:
     Each Zarr dataset creates one stitched output file.
     """
     
-    def __init__(self, zarr_folder: Union[str, Path], use_lzw: bool = False, max_workers: Optional[int] = None):
+    def __init__(self, zarr_folder: Union[str, Path], stitch_folder: Union[str, Path], use_lzw: bool = False, max_workers: Optional[int] = None):
         """
         Initialize stitcher with input validation and configuration.
         
         Args:
             zarr_folder: Directory containing Zarr subdirectories
+            stitch_folder: Directory containing Stitched OME-TIFFS
             use_lzw: Enable LZW compression for output files
             max_workers: Number of threads for parallel processing (auto-detected if None)
         """
@@ -53,7 +54,9 @@ class ZarrStitcher:
             raise FileNotFoundError(f"Zarr folder does not exist: {zarr_folder}")
         if not self.zarr_folder.is_dir():
             raise ValueError(f"Path is not a directory: {zarr_folder}")
-        
+
+        self.stitch_folder = Path(stitch_folder)
+        self.stitch_folder.mkdir(parents=True, exist_ok=True)
         self.use_lzw = use_lzw
         # Leave one CPU core free for system operations
         self.max_workers = max_workers or max(1, os.cpu_count() - 1)
@@ -309,7 +312,7 @@ class ZarrStitcher:
         ])
         
         # Create complete OME-XML following schema specification
-        xml = f"""<?xml version="1.0" encoding="UTF-8"?>
+        xml = f """<?xml version="1.0" encoding="UTF-8"?>
 <OME xmlns="http://www.openmicroscopy.org/Schemas/OME/2016-06"
      xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
      xsi:schemaLocation="http://www.openmicroscopy.org/Schemas/OME/2016-06 http://www.openmicroscopy.org/Schemas/OME/2016-06/ome.xsd">
@@ -382,7 +385,7 @@ class ZarrStitcher:
                 # Set up output path
                 folder_name = zarr_folder.name
                 output_filename = f"{folder_name}_stitched.ome.tiff"
-                output_path = self.zarr_folder / output_filename
+                output_path = self.stitch_folder / output_filename
 
                 # Extract ROI metadata
                 rois = self.extract_metadata(zarr_folder)
@@ -409,10 +412,11 @@ class ZarrStitcher:
 
 @click.command()
 @click.argument("zarr_folder", type=click.Path(exists=True, file_okay=False, path_type=Path))
+@click.argument("stitch_folder", type=click.Path(file_okay=False, path_type=Path), required=False)
 @click.option("--lzw", is_flag=True, help="Enable LZW compression")
 @click.option("--verbose", "-v", is_flag=True, help="Enable verbose logging")
 @click.option("--workers", "-w", type=int, help="Number of parallel workers")
-def main(zarr_folder: Path, lzw: bool, verbose: bool, workers: Optional[int]) -> None:
+def main(zarr_folder: Path, stitch_folder: Optional[Path], lzw: bool, verbose: bool, workers: Optional[int]) -> None:
     """
     Stitch Zarr files into OME-TIFF format with spatial positioning.
     
@@ -432,7 +436,10 @@ def main(zarr_folder: Path, lzw: bool, verbose: bool, workers: Optional[int]) ->
         logging.basicConfig(level=logging.INFO, format='%(levelname)s - %(message)s')
     
     try:
-        stitcher = ZarrStitcher(str(zarr_folder), use_lzw=lzw, max_workers=workers)
+        if not stitch_folder:
+            stitch_folder = zarr_folder.parent / "Zarr_stitched"
+            
+        stitcher = ZarrStitcher(str(zarr_folder), str(stitch_folder), use_lzw=lzw, max_workers=workers)
         stitcher.process_all_folders()
         click.echo(click.style("Stitching completed successfully!", fg='green'))
         
@@ -452,3 +459,4 @@ def main(zarr_folder: Path, lzw: bool, verbose: bool, workers: Optional[int]) ->
 
 if __name__ == "__main__":
     main()
+
