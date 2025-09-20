@@ -59,7 +59,7 @@ Exports individual ROIs from Zarr datasets into standalone OME‑TIFF files.
 
 **Arguments:**
 - **zarr_folder:** The folder containing Zarr data to be exported.
-- **tiff_folder:** (Optional) Destination directory for output TIFFs. Defaults to `<zarr_folder>/../TIFF_converted`.
+- **tiff_folder:** (Optional) Destination directory for output TIFFs. Defaults to `<zarr_folder>/TIFF_converted`.
 - **--lzw:** Optional flag to enable LZW compression. 
 
 ### 3. ZARR_STITCH
@@ -67,7 +67,7 @@ Exports individual ROIs from Zarr datasets into standalone OME‑TIFF files.
 **Command:** 
 
 ```
-zarr_stitch <zarr_folder>
+zarr_stitch <zarr_folder> [<stitch_folder>] [--lzw]
 ```
 
 **Description:**
@@ -75,6 +75,8 @@ Stitches Zarr files into a multi-channeled OME-TIFF.
 
 **Arguments:**
 - **zarr_folder:** The folder containing Zarr files to be stitched.
+- **stitch_folder:** (Optional) Destination directory for output stitched TIFFs. Defaults to `<zarr_folder>/Zarr_stitched`.
+- **--lzw:** Optional flag to enable LZW compression.
 
 **Notes:**
 - The `<zarr_folder>` should only contain folders with Zarr data. Empty or unexpected folder structures will be skipped.
@@ -86,7 +88,7 @@ Stitches Zarr files into a multi-channeled OME-TIFF.
 **Command:** 
 
 ```
-mcd_stitch <mcd_folder> [<zarr_folder>] [--lzw]
+mcd_stitch <mcd_folder> [<zarr_folder>] [<stitch_folder>] [--lzw]
 ```
 
 **Description:**
@@ -95,6 +97,7 @@ Combines the MCD to Zarr conversion and Zarr stitching into a single command.
 **Arguments:**
 - **mcd_folder:** The root folder of the IMC scan containing single or multiple MCD files.
 - **zarr_folder:** (Optional) Storage location of converted MCD files in Zarr format and the starting point for stitching Zarr files. If not provided, the output folder `<mcd_folder>/Zarr_converted` will be automatically created.
+- **stitch_folder:** (Optional) Destination directory for output stitched TIFFs. If not provided, the output folder `<mcd_folder>/Zarr_stitched` will be automatically created.
 - **--lzw:** Optional flag to enable LZW compression.
 
 ### 5. MCD_CONVERT
