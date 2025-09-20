@@ -16,13 +16,16 @@ logger = logging.getLogger(__name__)
 
 
 class ZarrStitcher:
-    def __init__(self, zarr_folder: Union[str, Path], use_lzw: bool = False, max_workers: Optional[int] = None):
+    def __init__(self, zarr_folder: Union[str, Path], stitch_folder: Union[str, Path], use_lzw: bool = False, max_workers: Optional[int] = None):
         self.zarr_folder = Path(zarr_folder)
         
         if not self.zarr_folder.exists():
             raise FileNotFoundError(f"Zarr folder does not exist: {zarr_folder}")
         if not self.zarr_folder.is_dir():
             raise ValueError(f"Path is not a directory: {zarr_folder}")
+        
+        self.stitch_folder = Path(stitch_folder)
+        self.stitch_folder.mkdir(parents=True, exist_ok=True)
         
         self.use_lzw = use_lzw
         self.max_workers = max_workers or max(1, os.cpu_count() - 1)
@@ -282,7 +285,7 @@ class ZarrStitcher:
                 
                 folder_name = zarr_folder.name
                 output_filename = f"{folder_name}_stitched.ome.tiff"
-                output_path = self.zarr_folder / output_filename
+                output_path = self.stitch_folder / output_filename
 
                 rois = self.extract_metadata(zarr_folder)
                 if not rois:
@@ -306,17 +309,22 @@ class ZarrStitcher:
 
 @click.command()
 @click.argument("zarr_folder", type=click.Path(exists=True, file_okay=False, path_type=Path))
+@click.argument("stitch_folder", type=click.Path(file_okay=False, path_type=Path), required=False)
 @click.option("--lzw", is_flag=True, help="Enable LZW compression")
 @click.option("--verbose", "-v", is_flag=True, help="Enable verbose logging")
 @click.option("--workers", "-w", type=int, help="Number of parallel workers")
-def main(zarr_folder: Path, lzw: bool, verbose: bool, workers: Optional[int]) -> None:
+def main(zarr_folder: Path, stitch_folder: Optional[Path], lzw: bool, verbose: bool, workers: Optional[int]) -> None:
+    """CLI for stitching Zarr-converted MCD into OME-TIFFs."""
     if verbose:
         logging.basicConfig(level=logging.DEBUG, format='%(asctime)s - %(levelname)s - %(message)s')
     else:
         logging.basicConfig(level=logging.INFO, format='%(levelname)s - %(message)s')
     
     try:
-        stitcher = ZarrStitcher(str(zarr_folder), use_lzw=lzw, max_workers=workers)
+        if not stitch_folder:
+            stitch_folder = zarr_folder.parent / "Zarr_stitched"
+            
+        stitcher = ZarrStitcher(str(zarr_folder), str(stitch_folder), use_lzw=lzw, max_workers=workers)
         stitcher.process_all_folders()
         click.echo(click.style("Stitching completed successfully!", fg='green'))
         
