@@ -50,9 +50,20 @@ def generate_ome_xml(image_data: np.ndarray, channel_names: List[str], base_name
     </OME>"""
     return xml_metadata
 
-def write_ome_tiff(image_data: np.ndarray, channel_names: List[str], output_path: str):
+
+def write_ome_tiff(image_data: np.ndarray, channel_names: List[str], output_path: str, use_zstd: bool):
     ome_xml = generate_ome_xml(image_data, channel_names, os.path.basename(output_path))
-    tifffile.imwrite(output_path, image_data, description=ome_xml, metadata={'axes': 'CYX'})
+    compression = 'zstd' if use_zstd else None
+    compressionargs = {'level': 15} if use_zstd else None
+
+    tifffile.imwrite(
+        output_path,
+        image_data,
+        description=ome_xml,
+        metadata={'axes': 'CYX'},
+        compression=compression,
+        compressionargs=compressionargs
+    )
 
 def create_pyramid(image, levels=4):
     pyramid = [image]
@@ -62,14 +73,22 @@ def create_pyramid(image, levels=4):
         pyramid.append(downsampled)
     return pyramid
 
-def write_pyramidal_tiff(image_data: np.ndarray, channel_names: List[str], output_path: str):
+def write_pyramidal_tiff(image_data: np.ndarray, channel_names: List[str], output_path: str, use_zstd: bool):
     tile_size = (256, 256)
     levels = 4
-    
+
     pyramid_levels = create_pyramid(image_data, levels=levels)
-    
+
+    compression = 'zstd' if use_zstd else None
+    compressionargs = {'level': 15} if use_zstd else None
+
     with tifffile.TiffWriter(output_path, bigtiff=True) as tif:
-        options = dict(tile=tile_size, metadata={'axes': 'CYX'})
+        options = dict(
+            tile=tile_size,
+            compression=compression,
+            compressionargs=compressionargs,
+            metadata={'axes': 'CYX'}
+        )
         ome_xml = generate_ome_xml(image_data, channel_names, os.path.basename(output_path))
 
         for i, level_data in enumerate(pyramid_levels):
@@ -77,6 +96,7 @@ def write_pyramidal_tiff(image_data: np.ndarray, channel_names: List[str], outpu
                 tif.write(level_data, subifds=levels - 1, description=ome_xml, **options)
             else:
                 tif.write(level_data, subfiletype=1, **options)
+
 
 def list_channels(tiff_path: str):
     _, channel_names = read_ome_tiff(tiff_path)
@@ -86,7 +106,8 @@ def list_channels(tiff_path: str):
 
 def parse_channels(channel_str: str) -> List[int]:
     channels = []
-    if not channel_str: return channels
+    if not channel_str:
+        return channels
     for part in channel_str.split(','):
         part = part.strip()
         if '-' in part:
@@ -96,23 +117,20 @@ def parse_channels(channel_str: str) -> List[int]:
             channels.append(int(part))
     return channels
 
-def subset_tiff(tiff_path: str, filter_str: Union[str, None], pyramid: bool, log_file: str, root_path: str = None):
+def subset_tiff(tiff_path: str, filter_str: Union[str, None], pyramid: bool, log_file: str, root_path: str = None, use_zstd: bool = False):
     try:
         if root_path:
             rel_path = os.path.relpath(tiff_path, root_path)
             print(f"Processing {rel_path}...")
         else:
             print(f"Processing {tiff_path}...")
-            
+
         image_data, channel_names = read_ome_tiff(tiff_path)
-        
-        selected_channels = []
-        
+
         if filter_str is None:
             selected_channels = list(range(len(channel_names)))
         elif filter_str == '':
-            selected_channels = [i for i, name in enumerate(channel_names) if
-                               any(metal in name for metal in [f"{i}" for i in range(141, 194)])]
+            selected_channels = [i for i, name in enumerate(channel_names) if any(metal in name for metal in [f"{i}" for i in range(141, 194)])]
         else:
             selected_channels = parse_channels(filter_str)
 
@@ -125,24 +143,25 @@ def subset_tiff(tiff_path: str, filter_str: Union[str, None], pyramid: bool, log
         if not valid_channels:
             print(f"No valid channels to process for {tiff_path}. Skipping.")
             return
-        
+
         subset_image_data = image_data[valid_channels, :, :]
         subset_channel_names = [channel_names[i] for i in valid_channels]
 
         base, _ = os.path.splitext(tiff_path)
-        if base.endswith('.ome'): base = os.path.splitext(base)[0]
-        
+        if base.endswith('.ome'):
+            base = os.path.splitext(base)[0]
+
         suffix = "_filtered" if filter_str is not None else ""
         if pyramid:
             suffix += "_pyramid"
-        
+
         output_path = f"{base}{suffix}.ome.tiff"
-        
+
         if pyramid:
-            write_pyramidal_tiff(subset_image_data, subset_channel_names, output_path)
+            write_pyramidal_tiff(subset_image_data, subset_channel_names, output_path, use_zstd)
         else:
-            write_ome_tiff(subset_image_data, subset_channel_names, output_path)
-        
+            write_ome_tiff(subset_image_data, subset_channel_names, output_path, use_zstd)
+
         if root_path:
             rel_output = os.path.relpath(output_path, root_path)
             print(f"Successfully wrote {rel_output}")
@@ -164,22 +183,23 @@ def snapshot_tiff_files(folder_path: str) -> List[Path]:
     ]
     return tiff_files
 
-def process_folder(folder_path: str, filter_str: Union[str, None], pyramid: bool, log_file: str):
+def process_folder(folder_path: str, filter_str: Union[str, None], pyramid: bool, log_file: str, use_zstd: bool):
     files_to_process = snapshot_tiff_files(folder_path)
-    
+
     if not files_to_process:
         print("No TIFF files found to process.")
         return
-    
+
     print(f"Found {len(files_to_process)} TIFF files to process.")
-    
+
     for tiff_file in files_to_process:
-        subset_tiff(str(tiff_file), filter_str, pyramid, log_file, folder_path)
+        subset_tiff(str(tiff_file), filter_str, pyramid, log_file, folder_path, use_zstd)
+
 
 def main():
     parser = argparse.ArgumentParser(description="""
     Process and subset OME-TIFF files.
-    
+
     Supports both:
     - Flat structure: stitched TIFFs from mcd_stitch
     - Nested structure: per-ROI TIFFs from mcd_convert -> zarr2tiff
@@ -191,6 +211,7 @@ def main():
     parser.add_argument("-c", "--list_channels", action="store_true", help="Lists all channels in the specified file (file only).")
     parser.add_argument("-f", "--filter", type=str, nargs='?', const='', default=None, help="Filter and subset channels. Provide channels as a comma-separated list, e.g., '0-5,7,10'. If flag is present but no channels are given, default filtering is applied.")
     parser.add_argument("-p", "--pyramid", action="store_true", help="Create a pyramidal (tiled) OME-TIFF as output.")
+    parser.add_argument("--zstd", action="store_true", help="Enable Zstandard compression for output OME-TIFFs.")
 
     args = parser.parse_args()
 
@@ -211,11 +232,11 @@ def main():
 
     if is_file:
         log_file = os.path.join(os.path.dirname(args.tiff_path), "Tiff-subset_error_log.txt")
-        subset_tiff(args.tiff_path, args.filter, args.pyramid, log_file)
+        subset_tiff(args.tiff_path, args.filter, args.pyramid, log_file, use_zstd=args.zstd)
     else:
         log_file = os.path.join(args.tiff_path, "Tiff-subset_error_log.txt")
-        process_folder(args.tiff_path, args.filter, args.pyramid, log_file)
+        process_folder(args.tiff_path, args.filter, args.pyramid, log_file, use_zstd=args.zstd)
+
 
 if __name__ == "__main__":
     main()
-
