@@ -20,11 +20,12 @@ The following packages will installed automatically:
 - `numpy`
 - `pandas`
 - `python_dateutil`
-- `xarray`
-- `zarr`
 - `scikit-image`
-- `tifffile`	
+- `tifffile`
+- `imagecodecs`
+- `xarray`	
 - `xmltodict`
+- `zarr`
 
 ## Command Line Usage
 
@@ -51,7 +52,7 @@ Converts MCD files to Zarr format.
  
 **Command:**
 ```  
-zarr2tiff <zarr_folder> [<tiff_folder>] [--lzw]  
+zarr2tiff <zarr_folder> [<tiff_folder>] [--zstd]  
 ```  
  
 **Description:**
@@ -60,14 +61,14 @@ Exports individual ROIs from Zarr datasets into standalone OME‑TIFF files.
 **Arguments:**
 - **zarr_folder:** The folder containing Zarr data to be exported.
 - **tiff_folder:** (Optional) Destination directory for output TIFFs. Defaults to `<zarr_folder>/TIFF_converted`.
-- **--lzw:** Optional flag to enable LZW compression. 
+- **--zstd:** Optional flag to enable zstd compression. 
 
 ### 3. ZARR_STITCH
 
 **Command:** 
 
 ```
-zarr_stitch <zarr_folder> [<stitch_folder>] [--lzw]
+zarr_stitch <zarr_folder> [<stitch_folder>] [--zstd]
 ```
 
 **Description:**
@@ -76,7 +77,7 @@ Stitches Zarr files into a multi-channeled OME-TIFF.
 **Arguments:**
 - **zarr_folder:** The folder containing Zarr files to be stitched.
 - **stitch_folder:** (Optional) Destination directory for output stitched TIFFs. Defaults to `<zarr_folder>/Zarr_stitched`.
-- **--lzw:** Optional flag to enable LZW compression.
+- **--zstd:** Optional flag to enable zstd compression.
 
 **Notes:**
 - The `<zarr_folder>` should only contain folders with Zarr data. Empty or unexpected folder structures will be skipped.
@@ -88,7 +89,7 @@ Stitches Zarr files into a multi-channeled OME-TIFF.
 **Command:** 
 
 ```
-mcd_stitch <mcd_folder> [<zarr_folder>] [<stitch_folder>] [--lzw]
+mcd_stitch <mcd_folder> [<zarr_folder>] [<stitch_folder>] [--zstd]
 ```
 
 **Description:**
@@ -98,13 +99,13 @@ Combines the MCD to Zarr conversion and Zarr stitching into a single command.
 - **mcd_folder:** The root folder of the IMC scan containing single or multiple MCD files.
 - **zarr_folder:** (Optional) Storage location of converted MCD files in Zarr format and the starting point for stitching Zarr files. If not provided, the output folder `<mcd_folder>/Zarr_converted` will be automatically created.
 - **stitch_folder:** (Optional) Destination directory for output stitched TIFFs. If not provided, the output folder `<mcd_folder>/Zarr_stitched` will be automatically created.
-- **--lzw:** Optional flag to enable LZW compression.
+- **--zstd:** Optional flag to enable zstd compression.
 
 ### 5. MCD_CONVERT
 
 **Command:** 
 ```  
-mcd_convert <mcd_folder> [--lzw]  
+mcd_convert <mcd_folder> [--zstd]  
 ```  
 
 **Description:** 
@@ -112,14 +113,14 @@ Combines the MCD to Zarr conversion and Zarr to single ROI OME-TIFFs.
 
 **Arguments:**
 - **mcd_folder:** Root folder containing IMC `.mcd` files.
-- **--lzw:** Optional flag to enable LZW compression.
+- **--zstd:** Optional flag to enable zstd compression.
 
 ### 6. TIFF_SUBSET
 
 **Command:** 
 
 ```
-tiff_subset <tiff_path> [-c] [-p] [-f CHANNELS]
+tiff_subset <tiff_path> [-c] [-p] [-f CHANNELS] [--zstd]
 ```
 
 **Description:**
@@ -130,6 +131,7 @@ A function that allows you to remove background channels, view all channels in a
 - **-c:** Lists all channels in the OME-TIFF file.
 - **-p:** Enables the creation of a pyramidal OME-TIFF with tiling.
 - **-f CHANNELS:** Filters and subsets channels. Provide channels to subset, e.g., "0-5,7,10". If no channels are provided, default filtering is applied. 
+- **--zstd:** Optional flag to enable zstd compression.
 
 **Notes:**
 - **Order of arguments:** The `-f` flag (if used) must be the last argument in the command.
@@ -159,9 +161,9 @@ A function that allows you to remove background channels, view all channels in a
 	- When a directory is provided, all TIFF files within the directory will be processed.
 	- The output files will have `_filtered.ome.tiff` appended to the original filename.
 
-4. **Subset Tiff files with Pyramid and Tile Generation:**
+4. **Subset Tiff files with Pyramid, Tile Generation and zstd compression:**
     ```
-    tiff_subset "path/to/file.ome.tiff" -p -f	
+    tiff_subset "path/to/file.ome.tiff" -p -f --zstd	
     ```
 
 	**Notes:**
