@@ -29,7 +29,7 @@ logger = logging.getLogger(__name__)
 # Core Python API — can be imported and used programmatically
 # ----------------------------------------------------------------------
 
-def mcd_stitch(mcd_folder, zarr_folder=None, stitch_folder=None, use_lzw=False):
+def mcd_stitch(mcd_folder, zarr_folder=None, stitch_folder=None, use_zstd=False):
     """
     Convert MCD files to Zarr and stitch them together.
 
@@ -39,8 +39,8 @@ def mcd_stitch(mcd_folder, zarr_folder=None, stitch_folder=None, use_lzw=False):
         Path to the input MCD file or folder.
     zarr_folder : str or Path, optional
         Output Zarr folder. If not provided, a default will be created.
-    use_lzw : bool
-        Whether to apply LZW compression during stitching.
+    use_zstd : bool
+        Whether to apply zstd compression during stitching.
     """
     mcd_path = Path(mcd_folder)
     if not mcd_path.exists():
@@ -63,12 +63,12 @@ def mcd_stitch(mcd_folder, zarr_folder=None, stitch_folder=None, use_lzw=False):
     logger.info("MCD to Zarr conversion completed")
 
     # Step 2: Zarr stitching
-    stitcher = ZarrStitcher(zarr_folder, stitch_folder, use_lzw=use_lzw)
+    stitcher = ZarrStitcher(zarr_folder, stitch_folder, use_zstd=use_zstd)
     stitcher.process_all_folders()
     logger.info("Zarr stitching completed")
 
 
-def mcd_convert(mcd_folder, zarr_folder=None, tiff_folder=None, use_lzw=False):
+def mcd_convert(mcd_folder, zarr_folder=None, tiff_folder=None, use_zstd=False):
     """
     Convert MCD files to Zarr and then export TIFFs per ROI.
 
@@ -80,8 +80,8 @@ def mcd_convert(mcd_folder, zarr_folder=None, tiff_folder=None, use_lzw=False):
         Output Zarr folder. If not provided, a default will be created.
     tiff_folder : str or Path, optional
         Output TIFF folder. If not provided, a default will be created.
-    use_lzw : bool
-        Whether to apply LZW compression in TIFFs.
+    use_zstd : bool
+        Whether to apply zstd compression in TIFFs.
     """
     mcd_path = Path(mcd_folder)
     if not mcd_path.exists():
@@ -102,7 +102,7 @@ def mcd_convert(mcd_folder, zarr_folder=None, tiff_folder=None, use_lzw=False):
     logger.info("MCD to Zarr conversion completed")
 
     # Step 2: Zarr → TIFF
-    zarr2tiff(zarr_folder, tiff_folder, use_lzw=use_lzw)
+    zarr2tiff(zarr_folder, tiff_folder, use_zstd=use_zstd)
     logger.info("Zarr to TIFF conversion completed")
 
 
@@ -116,19 +116,19 @@ def mcd_convert(mcd_folder, zarr_folder=None, tiff_folder=None, use_lzw=False):
 @click.argument("mcd_folder", type=click.Path(exists=True, path_type=Path))
 @click.argument("zarr_folder", type=click.Path(path_type=Path), required=False)
 @click.argument("stitch_folder", type=click.Path(path_type=Path), required=False)
-@click.option("--lzw", is_flag=True, help="Enable LZW compression for stitched output")
+@click.option("--zstd", is_flag=True, help="Enable zstd compression for stitched output")
 @click.option("--verbose", "-v", is_flag=True, help="Enable verbose logging")
-def stitch_cli(mcd_folder, zarr_folder, stitch_folder, lzw, verbose):
+def stitch_cli(mcd_folder, zarr_folder, stitch_folder, zstd, verbose):
     """
     CLI command: mcd_stitch
 
     Usage:
-        mcd_stitch <mcd_folder> [zarr_folder] [stitch_folder] [--lzw] [-v]
+        mcd_stitch <mcd_folder> [zarr_folder] [stitch_folder] [--zstd] [-v]
     """
     if verbose:
         logging.getLogger().setLevel(logging.DEBUG)
     try:
-        mcd_stitch(str(mcd_folder), str(zarr_folder) if zarr_folder else None, str(stitch_folder) if stitch_folder else None, use_lzw=lzw)
+        mcd_stitch(str(mcd_folder), str(zarr_folder) if zarr_folder else None, str(stitch_folder) if stitch_folder else None, use_zstd=zstd)
         click.echo(click.style("Stitching completed successfully!", fg="green"))
     except Exception as e:
         if verbose:
@@ -141,20 +141,20 @@ def stitch_cli(mcd_folder, zarr_folder, stitch_folder, lzw, verbose):
 @click.argument("mcd_folder", type=click.Path(exists=True, path_type=Path))
 @click.argument("zarr_folder", type=click.Path(path_type=Path), required=False)
 @click.argument("tiff_folder", type=click.Path(path_type=Path), required=False)
-@click.option("--lzw", is_flag=True, help="Enable LZW compression for TIFF output")
+@click.option("--zstd", is_flag=True, help="Enable zstd compression for TIFF output")
 @click.option("--verbose", "-v", is_flag=True, help="Enable verbose logging")
-def convert_cli(mcd_folder, zarr_folder, tiff_folder, lzw, verbose):
+def convert_cli(mcd_folder, zarr_folder, tiff_folder, zstd, verbose):
     """
     CLI command: mcd_convert
 
     Usage:
-        mcd_convert <mcd_folder> [zarr_folder] [tiff_folder] [--lzw] [-v]
+        mcd_convert <mcd_folder> [zarr_folder] [tiff_folder] [--zstd] [-v]
     """
     if verbose:
         logging.getLogger().setLevel(logging.DEBUG)
     try:
         mcd_convert(str(mcd_folder), str(zarr_folder) if zarr_folder else None,
-                    str(tiff_folder) if tiff_folder else None, use_lzw=lzw)
+                    str(tiff_folder) if tiff_folder else None, use_zstd=zstd)
         click.echo(click.style("Conversion completed successfully!", fg="green"))
     except Exception as e:
         if verbose:
