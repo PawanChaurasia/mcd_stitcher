@@ -286,7 +286,7 @@ def process_folder(folder_path: str, filter_str: Union[str, None], pyramid: bool
     print(f"Found {len(files_to_process)} TIFF files to process.\n")
     
     for tiff_file in files_to_process:
-        subset_tiff(str(tiff_file), filter_str, pyramid, log_file, folder_path)
+        subset_tiff(str(tiff_file), filter_str, pyramid, log_file, folder_path, use_zstd)
 
 
 # --------------------------
@@ -325,8 +325,9 @@ def main():
         if not is_file:
             print("Error: --list_channels only valid for a single TIFF file.")
             return
-        list_channels(args.tiff_path)
-        return
+        else:
+            list_channels(args.tiff_path)
+            return
 
     # Safety: if no filter nor pyramid → nothing to do
     if args.filter is None and not args.pyramid:
