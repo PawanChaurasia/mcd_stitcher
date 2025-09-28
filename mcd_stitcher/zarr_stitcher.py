@@ -37,14 +37,14 @@ class ZarrStitcher:
     Each Zarr dataset creates one stitched output file.
     """
     
-    def __init__(self, zarr_folder: Union[str, Path], stitch_folder: Union[str, Path], use_lzw: bool = False, max_workers: Optional[int] = None):
+    def __init__(self, zarr_folder: Union[str, Path], stitch_folder: Union[str, Path], use_zstd: bool = False, max_workers: Optional[int] = None):
         """
         Initialize stitcher with input validation and configuration.
         
         Args:
             zarr_folder: Directory containing Zarr subdirectories
             stitch_folder: Directory containing Stitched OME-TIFFS
-            use_lzw: Enable LZW compression for output files
+            use_zstd: Enable zstd compression for output files
             max_workers: Number of threads for parallel processing (auto-detected if None)
         """
         self.zarr_folder = Path(zarr_folder)
@@ -57,7 +57,7 @@ class ZarrStitcher:
 
         self.stitch_folder = Path(stitch_folder)
         self.stitch_folder.mkdir(parents=True, exist_ok=True)
-        self.use_lzw = use_lzw
+        self.use_zstd = use_zstd
         # Leave one CPU core free for system operations
         self.max_workers = max_workers or max(1, os.cpu_count() - 1)
         self.log_file = self.zarr_folder / "stitching_error_log.txt"
@@ -340,16 +340,17 @@ class ZarrStitcher:
         # Prepare TIFF writing arguments
         tiff_kwargs = {
             'data': imarr.values,
-            'description': xml,                      # OME-XML metadata
+            'description': xml,                     # OME-XML metadata
             'metadata': {'axes': 'CYX'},            # Axis information
-            'contiguous': True,                      # Performance optimization
+            'contiguous': True,                     # Performance optimization
             'resolution': (25400, 25400),           # 1 micrometer/pixel
             'resolutionunit': 'inch',
             **kwargs
         }
         
-        if self.use_lzw:
-            tiff_kwargs['compression'] = 'lzw'
+        if self.use_zstd:
+            tiff_kwargs['compression'] = 'zstd'
+            compressionargs={'level': 15}
         
         try:
             tifffile.imwrite(outpath, **tiff_kwargs)
@@ -413,10 +414,10 @@ class ZarrStitcher:
 @click.command()
 @click.argument("zarr_folder", type=click.Path(exists=True, file_okay=False, path_type=Path))
 @click.argument("stitch_folder", type=click.Path(file_okay=False, path_type=Path), required=False)
-@click.option("--lzw", is_flag=True, help="Enable LZW compression")
+@click.option("--zstd", is_flag=True, help="Enable zstd compression")
 @click.option("--verbose", "-v", is_flag=True, help="Enable verbose logging")
 @click.option("--workers", "-w", type=int, help="Number of parallel workers")
-def main(zarr_folder: Path, stitch_folder: Optional[Path], lzw: bool, verbose: bool, workers: Optional[int]) -> None:
+def main(zarr_folder: Path, stitch_folder: Optional[Path], zstd: bool, verbose: bool, workers: Optional[int]) -> None:
     """
     Stitch Zarr files into OME-TIFF format with spatial positioning.
     
@@ -427,7 +428,7 @@ def main(zarr_folder: Path, stitch_folder: Optional[Path], lzw: bool, verbose: b
     
     Examples:
         zarr_stitch /data/experiment/
-        zarr_stitch /data/experiment/ --lzw --verbose --workers 8
+        zarr_stitch /data/experiment/ --zstd --verbose --workers 8
     """
     # Configure logging level
     if verbose:
@@ -439,7 +440,7 @@ def main(zarr_folder: Path, stitch_folder: Optional[Path], lzw: bool, verbose: b
         if not stitch_folder:
             stitch_folder = zarr_folder.parent / "Zarr_stitched"
             
-        stitcher = ZarrStitcher(str(zarr_folder), str(stitch_folder), use_lzw=lzw, max_workers=workers)
+        stitcher = ZarrStitcher(str(zarr_folder), str(stitch_folder), use_zstd=zstd, max_workers=workers)
         stitcher.process_all_folders()
         click.echo(click.style("Stitching completed successfully!", fg='green'))
         
