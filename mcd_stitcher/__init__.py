@@ -18,7 +18,7 @@ from .mcd2zarr_converter import Imc2Zarr, imc2zarr, main as mcd2zarr_main
 from .zarr_stitcher import ZarrStitcher, main as stitcher_main
 from .zarr2tiff import zarr2tiff, main as zarr2tiff_main
 
-__version__ = "1.1.2.post1"
+__version__ = "1.1.3-dev"
 
 # Default logging configuration (INFO level by default)
 logging.basicConfig(level=logging.INFO, format='%(levelname)s: %(message)s')
