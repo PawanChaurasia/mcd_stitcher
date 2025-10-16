@@ -87,6 +87,7 @@ class ManualZarrStitcher:
                                 'timestamp': meta['q_timestamp'],
                                 'width': int(meta['q_maxx']),
                                 'height': int(meta['q_maxy']),
+                                'roi_id': meta.get('q_id'),  # keep for internal lookups/logging
                                 'description': meta.get('q_description') or meta.get('description') or "",
                                 'file_path': zarr_path / group_key,
                                 'channels': meta.get('channels', [])
@@ -182,18 +183,17 @@ class ManualZarrStitcher:
         print("\n" + "="*90)
         print("DETECTED ROIs")
         print("="*90)
-        print(f"{'Idx':<4} | {'Description':<28} | {'Timestamp':<19} | {'StageX':<8} | {'StageY':<8} | {'Size (W×H)':<12}")
+        print(f"{'Idx':<4} | {'Description':<40} | {'Timestamp':<19} | {'StageX':<8} | {'StageY':<8} | {'Size (W×H)':<12}")
         print("-"*90)
-        for idx, r in enumerate(default_order):  
-            ts = self.convert_timestamp_to_simple_format(r['timestamp'])  
-            desc = (r.get('description') or "").strip()  
-            # Truncate long descriptions for neat columns  
-            if len(desc) > 28:  
-                desc = desc[:37] + "..."  
-            print(  
-                f"{idx:<4} | {desc:<40} | {ts:<19} | "  
-                f"{r['stage_x']:>8.1f} | {r['stage_y']:>8.1f} | {r['width']:>4} × {r['height']:<4}"  
-            )  
+        for idx, r in enumerate(default_order):
+            ts = self.convert_timestamp_to_simple_format(r['timestamp'])
+            desc = (r.get('description') or "").strip()
+            if len(desc) > 40:
+                desc = desc[:37] + "..."
+            print(
+                f"{idx:<4} | {desc:<40} | {ts:<19} | "
+                f"{r['stage_x']:>8.1f} | {r['stage_y']:>8.1f} | {r['width']:>4} × {r['height']:<4}"
+            )
         print("="*90)
 
         # Show default order indices for clarity
@@ -449,4 +449,5 @@ def main(zarr_folder: Path, stitch_folder: Optional[Path], zstd: bool, verbose: 
 
 if __name__ == "__main__":
     main()
+
 
