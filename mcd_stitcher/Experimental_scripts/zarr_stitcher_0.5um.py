@@ -257,6 +257,10 @@ class ZarrStitcher:
                 # Calculate placement offsets in stitched image
                 x_offset = int(round((roi['stage_x'] - min_x_um) / ps))
                 y_offset = int(round((max_y_um - roi['stage_y']) / ps))
+
+                logger.debug( "ROI %s -> x_offset: %d, y_offset: %d, stage_x: %.3f, stage_y: %.3f, width: %d, height: %d",
+                             roi['roi_id'], x_offset, y_offset, roi['stage_x'], roi['stage_y'], roi['width'], roi['height'])
+                
                 return (image, x_offset, y_offset, roi['roi_id'])
                 
             except Exception as e:
@@ -454,4 +458,5 @@ def main(zarr_folder: Path, stitch_folder: Optional[Path], zstd: bool, verbose: 
 
 if __name__ == "__main__":
     main()
+
 
