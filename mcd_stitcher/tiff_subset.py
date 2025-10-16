@@ -30,27 +30,51 @@ from pathlib import Path
 # Metadata & IO utilities
 # --------------------------
 
-def read_ome_tiff(tiff_path: str) -> (np.ndarray, List[str]):
+def read_ome_tiff(tiff_path: str):
     """
-    Read TIFF pixel data + extract channel names from OME-XML metadata.
+    Read TIFF pixel data and key OME-XML fields commonly needed downstream.
+    Returns:
+      - image_data: np.ndarray (expected CYX)
+      - channel_names: List[str]
+      - psx: float (PhysicalSizeX, micrometers)
+      - psy: float (PhysicalSizeY, micrometers)
+      - size_x: int
+      - size_y: int
+      - dtype_str: str (NumPy dtype string)
+      - dim_order: str (OME dimension order, e.g., 'XYCZT')
+      - ome_xml: str (full original OME-XML)
     """
     with tifffile.TiffFile(tiff_path) as tif:
         image_data = tif.asarray()
-        ome_metadata = tif.ome_metadata
+        ome_xml = tif.ome_metadata
 
-    if ome_metadata is None:
+    if ome_xml is None:
         raise ValueError(f"No OME-XML metadata found in {tiff_path}.")
 
-    # Parse XML and extract channel names
-    root = ET.fromstring(ome_metadata)
-    namespace = {'ome': 'http://www.openmicroscopy.org/Schemas/OME/2016-06'}
-    channel_elements = root.findall('.//ome:Channel', namespace)
-    channel_names = [channel.get('Name') for channel in channel_elements]
+    root = ET.fromstring(ome_xml)
+    ns = {'ome': 'http://www.openmicroscopy.org/Schemas/OME/2016-06'}
 
-    return image_data, channel_names
+    # Channels
+    channel_elements = root.findall('.//ome:Channel', ns)
+    channel_names = [ch.get('Name') for ch in channel_elements]
+
+    # Pixels node
+    pixels = root.find('.//ome:Pixels', ns)
+    if pixels is None:
+        raise ValueError("OME-XML Pixels element missing.")
+
+    dim_order = pixels.get('DimensionOrder', 'XYCZT')
+    size_x = int(pixels.get('SizeX', image_data.shape[-1]))
+    size_y = int(pixels.get('SizeY', image_data.shape[-2]))
+    psx = float(pixels.get('PhysicalSizeX', '1.0'))
+    psy = float(pixels.get('PhysicalSizeY', '1.0'))
+
+    dtype_str = str(image_data.dtype)
+
+    return image_data, channel_names, psx, psy, size_x, size_y, dtype_str, dim_order, ome_xml
 
 
-def generate_ome_xml(image_data: np.ndarray, channel_names: List[str], base_name: str) -> str:
+def generate_ome_xml(image_data: np.ndarray, channel_names: List[str], base_name: str, psx: float, psy: float) -> str:
     """
     Build a minimal OME-XML header string given image shape and channels.
     """
@@ -73,8 +97,8 @@ def generate_ome_xml(image_data: np.ndarray, channel_names: List[str], base_name
                     SizeX="{image_data.shape[2]}"
                     SizeY="{image_data.shape[1]}"
                     SizeZ="1"
-                    PhysicalSizeX="1.0"
-                    PhysicalSizeY="1.0"
+                    PhysicalSizeX="{psx}"
+                    PhysicalSizeY="{psy}"
                     Type="{image_data.dtype}">
                 <TiffData />
                 {channels_xml}
@@ -84,11 +108,11 @@ def generate_ome_xml(image_data: np.ndarray, channel_names: List[str], base_name
     return xml_metadata
 
 
-def write_ome_tiff(image_data: np.ndarray, channel_names: List[str], output_path: str, use_zstd: bool):
+def write_ome_tiff(image_data: np.ndarray, channel_names: List[str], output_path: str, use_zstd: bool, psx: float, psy: float):
     """
     Write a simple OME-TIFF with given channel subset.
     """
-    ome_xml = generate_ome_xml(image_data, channel_names, os.path.basename(output_path))
+    ome_xml = generate_ome_xml(image_data, channel_names, os.path.basename(output_path), psx, psy)
     compression = 'zstd' if use_zstd else None
     compressionargs = {'level': 15} if use_zstd else None
 
@@ -117,7 +141,7 @@ def create_pyramid(image, levels=4):
     return pyramid
 
 
-def write_pyramidal_tiff(image_data: np.ndarray, channel_names: List[str], output_path: str, use_zstd: bool):
+def write_pyramidal_tiff(image_data: np.ndarray, channel_names: List[str], output_path: str, use_zstd: bool, psx: float, psy: float):
     """
     Write a tiled pyramid OME-TIFF (multi-resolution).
     """
@@ -137,7 +161,7 @@ def write_pyramidal_tiff(image_data: np.ndarray, channel_names: List[str], outpu
             compressionargs=compressionargs,
             metadata={'axes': 'CYX'}
         )
-        ome_xml = generate_ome_xml(image_data, channel_names, os.path.basename(output_path))
+        ome_xml = generate_ome_xml(image_data, channel_names, os.path.basename(output_path), psx, psy)
 
         for i, level_data in enumerate(pyramid_levels):
             if i == 0:
@@ -238,9 +262,9 @@ def subset_tiff(tiff_path: str, filter_str: Union[str, None], pyramid: bool, log
         
         # Write output
         if pyramid:
-            write_pyramidal_tiff(subset_image_data, subset_channel_names, output_path, use_zstd)
+            write_pyramidal_tiff(subset_image_data, subset_channel_names, output_path, use_zstd, psx, psy)
         else:
-            write_ome_tiff(subset_image_data, subset_channel_names, output_path, use_zstd)
+            write_ome_tiff(subset_image_data, subset_channel_names, output_path, use_zstd, psx, psy)
         
         if root_path:
             rel_output = os.path.relpath(output_path, root_path)
