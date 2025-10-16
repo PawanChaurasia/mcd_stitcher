@@ -1,6 +1,15 @@
 """
-Zarr Stitcher 0.5um - Development Version
+Zarr Stitcher - Development Version
 
+Stitches Zarr-format imaging mass cytometry data into OME-TIFF files.
+Processes multiple ROIs based on spatial coordinates with proper metadata preservation.
+
+Key Features:
+- Batch processing of Zarr directories
+- Spatial stitching using stage coordinates
+- Channel consistency validation
+- Parallel ROI loading for performance
+- OME-TIFF output with proper metadata
 """
 
 import logging
@@ -28,7 +37,7 @@ class ZarrStitcher:
     Each Zarr dataset creates one stitched output file.
     """
     
-    def __init__(self, zarr_folder: Union[str, Path], stitch_folder: Union[str, Path], use_zstd: bool = False, max_workers: Optional[int] = None, pixel_size_um: float = 1.0):
+    def __init__(self, zarr_folder: Union[str, Path], stitch_folder: Union[str, Path], use_zstd: bool = False, max_workers: Optional[int] = None):
         """
         Initialize stitcher with input validation and configuration.
         
@@ -39,7 +48,6 @@ class ZarrStitcher:
             max_workers: Number of threads for parallel processing (auto-detected if None)
         """
         self.zarr_folder = Path(zarr_folder)
-        self.pixel_size_um = float(pixel_size_um)
         
         # Validate input directory
         if not self.zarr_folder.exists():
@@ -213,17 +221,15 @@ class ZarrStitcher:
             raise ValueError("No ROIs provided for stitching")
         
         logger.info(f"Stitching {len(rois)} ROIs")
-
-        ps = self.pixel_size_um  # µm per pixel
         
         # Calculate spatial bounds - find min/max coordinates across all ROIs
-        min_x_um = min(roi['stage_x'] for roi in rois)
-        max_x_um = max(roi['stage_x'] + roi['width'] * ps for roi in rois)
-        min_y_um = min(roi['stage_y'] - roi['height'] * ps for roi in rois)
-        max_y_um = max(roi['stage_y'] for roi in rois)
+        min_x = min(roi['stage_x'] for roi in rois)
+        min_y = min(roi['stage_y'] - roi['height'] for roi in rois)
+        max_x = max(roi['stage_x'] + roi['width'] for roi in rois)
+        max_y = max(roi['stage_y'] for roi in rois)
 
-        stitched_width  = int(round((max_x_um - min_x_um) / ps))
-        stitched_height = int(round((max_y_um - min_y_um) / ps))
+        stitched_width = int(max_x - min_x)
+        stitched_height = int(max_y - min_y)
         
         # Determine maximum channels across all ROIs
         max_channels = 0
@@ -255,8 +261,8 @@ class ZarrStitcher:
                     return None
                 
                 # Calculate placement offsets in stitched image
-                x_offset = int(round((roi['stage_x'] - min_x_um) / ps))
-                y_offset = int(round((roi['stage_y'] - roi['height'] * ps - min_y_um) / ps))
+                x_offset = int(roi['stage_x'] - min_x)
+                y_offset = abs(int(roi['stage_y'] - max_y))
                 return (image, x_offset, y_offset, roi['roi_id'])
                 
             except Exception as e:
@@ -320,8 +326,8 @@ class ZarrStitcher:
                 SizeX="{Nx}"
                 SizeY="{Ny}"
                 SizeZ="1"
-                PhysicalSizeX="{self.pixel_size_um}"
-                PhysicalSizeY="{self.pixel_size_um}"
+                PhysicalSizeX="1.0"
+                PhysicalSizeY="1.0"
                 Type="uint16">
             <TiffData />
             {channels_xml}
@@ -336,8 +342,9 @@ class ZarrStitcher:
             'data': imarr.values,
             'description': xml,                     # OME-XML metadata
             'metadata': {'axes': 'CYX'},            # Axis information
-            'bigtiff': True,                        # For large tiff processing
-            'tile': (256,256),                      # Chunk based tiff writing 
+            'contiguous': True,                     # Performance optimization
+            'resolution': (25400, 25400),           # 1 micrometer/pixel
+            'resolutionunit': 'inch',
             **kwargs
         }
         
@@ -410,8 +417,7 @@ class ZarrStitcher:
 @click.option("--zstd", is_flag=True, help="Enable zstd compression")
 @click.option("--verbose", "-v", is_flag=True, help="Enable verbose logging")
 @click.option("--workers", "-w", type=int, help="Number of parallel workers")
-@click.option("--pxum", "-px", type=float, default=1.0, show_default=True, help="Pixel size in micrometers (X/Y). Use 0.5 for 0.5 µm mode.")
-def main(zarr_folder: Path, stitch_folder: Optional[Path], zstd: bool, verbose: bool, workers: Optional[int], pxum: float) -> None:
+def main(zarr_folder: Path, stitch_folder: Optional[Path], zstd: bool, verbose: bool, workers: Optional[int]) -> None:
     """
     Stitch Zarr files into OME-TIFF format with spatial positioning.
     
@@ -434,7 +440,7 @@ def main(zarr_folder: Path, stitch_folder: Optional[Path], zstd: bool, verbose: 
         if not stitch_folder:
             stitch_folder = zarr_folder.parent / "Zarr_stitched"
             
-        stitcher = ZarrStitcher(str(zarr_folder), str(stitch_folder), use_zstd=zstd, max_workers=workers, pixel_size_um=pxum)
+        stitcher = ZarrStitcher(str(zarr_folder), str(stitch_folder), use_zstd=zstd, max_workers=workers)
         stitcher.process_all_folders()
         click.echo(click.style("Stitching completed successfully!", fg='green'))
         
@@ -454,3 +460,5 @@ def main(zarr_folder: Path, stitch_folder: Optional[Path], zstd: bool, verbose: 
 
 if __name__ == "__main__":
     main()
+
+
