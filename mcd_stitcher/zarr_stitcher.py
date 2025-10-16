@@ -5,6 +5,7 @@ from pathlib import Path
 from typing import Union, List, Dict, Optional, Tuple
 import concurrent.futures
 
+import math
 import numpy as np
 import tifffile
 import xarray as xr
@@ -151,8 +152,8 @@ class ZarrStitcher:
         max_x = max(roi['stage_x'] + roi['width'] for roi in rois)
         max_y = max(roi['stage_y'] for roi in rois)
 
-        stitched_width = int(max_x - min_x)
-        stitched_height = int(max_y - min_y)
+        stitched_width  = int(math.ceil(max_x - min_x))
+        stitched_height = int(math.ceil(max_y - min_y))
         
         # Determine max channels
         max_channels = 0
@@ -345,3 +346,4 @@ def main(zarr_folder: Path, stitch_folder: Optional[Path], zstd: bool, verbose: 
 
 if __name__ == "__main__":
     main()
+
