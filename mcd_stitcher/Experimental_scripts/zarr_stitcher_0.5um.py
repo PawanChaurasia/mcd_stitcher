@@ -458,5 +458,3 @@ def main(zarr_folder: Path, stitch_folder: Optional[Path], zstd: bool, verbose: 
 
 if __name__ == "__main__":
     main()
-
-
