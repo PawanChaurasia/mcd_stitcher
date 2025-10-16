@@ -303,7 +303,7 @@ class ZarrStitcher:
         ])
         
         # Create complete OME-XML following schema specification
-        xml = f """<?xml version="1.0" encoding="UTF-8"?>
+        xml = f"""<?xml version="1.0" encoding="UTF-8"?>
 <OME xmlns="http://www.openmicroscopy.org/Schemas/OME/2016-06"
      xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
      xsi:schemaLocation="http://www.openmicroscopy.org/Schemas/OME/2016-06 http://www.openmicroscopy.org/Schemas/OME/2016-06/ome.xsd">
@@ -451,4 +451,5 @@ def main(zarr_folder: Path, stitch_folder: Optional[Path], zstd: bool, verbose: 
 
 if __name__ == "__main__":
     main()
+
 
