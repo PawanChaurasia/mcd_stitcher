@@ -31,14 +31,14 @@ pip install mcd_stitcher
 
 ### 🔍 Which command should I use?
 
-|   | Command       | Description                                            |
-|---|---------------|--------------------------------------------------------|
-|▶️|`mcd_stitch`   | For converting ROIs into whole-slide stitched OME-TIFF |
-|▶️|`mcd_convert`  | For converting ROIs into individual OME-TIFFs          |
-|▶️|`tiff_subset`  | For post-processing on OME-TIFFs                       |
-|▶️|`imc2zarr`     | Custom Workflows & Troubleshooting                     |
-|▶️|`zarr2tiff`    | Custom Workflows & Troubleshooting                     |
-|▶️|`zarr_stitch`  | Custom Workflows & Troubleshooting                     |
+| Command       | Description                                            |
+|---------------|--------------------------------------------------------|
+|`mcd_stitch`   | For converting ROIs into whole-slide stitched OME-TIFF |
+|`mcd_convert`  | For converting ROIs into individual OME-TIFFs          |
+|`tiff_subset`  | For post-processing on OME-TIFFs                       |
+|`imc2zarr`     | Custom Workflows & Troubleshooting                     |
+|`zarr2tiff`    | Custom Workflows & Troubleshooting                     |
+|`zarr_stitch`  | Custom Workflows & Troubleshooting                     |
 
 ## ⚡ Default Workflow Commands
 
