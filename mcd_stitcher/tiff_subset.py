@@ -23,9 +23,8 @@ import traceback
 @click.option('-f','--filter',type=str,nargs=1,required=False,help="Subset channels (e.g. '0-5,7,10')")
 @click.option('-p','--pyramid',is_flag=True, help='Create a pyramidal (tiled) TIFF as output')
 @click.argument('input_path', type=click.Path(exists=True, path_type=Path))
-@click.argument('output_path', type=click.Path(exists=False, path_type=Path), required=False)
 
-def main(output_type, compression, list_channels, filter, pyramid, input_path, output_path):
+def main(output_type, compression, list_channels, filter, pyramid, input_path):
     start_all = time.time()
 
     try:
@@ -43,11 +42,11 @@ def main(output_type, compression, list_channels, filter, pyramid, input_path, o
             return
 
         if input_path.is_file():
-            out_dir = output_path.parent if output_path else input_path.parent
+            out_dir = input_path.parent
             subset_single_file(input_path, out_dir, filter, compression, output_type, pyramid=pyramid)
 
         elif input_path.is_dir():
-            out_dir = output_path if output_path else input_path
+            out_dir = input_path
             subset_directory(input_path, out_dir, filter, compression, output_type, pyramid=pyramid)
             
         else:
