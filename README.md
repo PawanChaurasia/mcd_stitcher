@@ -1,8 +1,16 @@
 # MCD STITCHER
 
+> ⚠️ **Legacy branch**
+>
+> This branch contains the original Zarr-based implementation of `mcd_stitcher`
+> (versions ≤ 1.1.3).
+>
+> This code is **no longer under active development** and is preserved for
+> reproducibility and backward compatibility.
+
 <p align="left">
   <a href="https://pypi.org/project/mcd_stitcher/">
-    <img src="https://img.shields.io/pypi/v/mcd_stitcher?label=PyPI%20Version&color=3fb950&style=flat-square"></a>
+    <img src="https://img.shields.io/badge/PyPI-1.1.3-3fb950?style=flat-square" alt="PyPI Version 1.1.3"></a>
   <img src="https://img.shields.io/badge/Python-3.11%20|%203.12%20|%203.13-blue?style=flat-square" alt="Python Versions">
   <a href="https://github.com/PawanChaurasia/mcd_stitcher/blob/main/LICENSE">
     <img src="https://img.shields.io/badge/License-GPLv3-lightgrey?style=flat-square" alt="License: GPLv3"></a>
