@@ -59,10 +59,6 @@ def make_dir(path: Path):
 def make_out_dir(input_path: Path, base_out: Optional[Path]) -> Path:
     base = base_out if base_out else input_path.parent
     return base / "TIFF_Converted" / input_path.stem
-
-def clean_name(name):
-    bad_chars = r'[\/:*?"<>|]' if platform.system() == 'Windows' else r'[|/:*?[$!]'
-    return re.sub(bad_chars, '_', name).strip()
     
 def build_ome_xml(acqs, tiff_name, dtype):
     ome = ET.Element('OME', {
@@ -146,3 +142,4 @@ def mcd_convert(mcd_path, out_dir, dtype, compression):
 
 if __name__ == '__main__':
     main()
+
