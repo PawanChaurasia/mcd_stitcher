@@ -114,7 +114,7 @@ def mcd_convert(mcd_path, out_dir, dtype, compression):
             for acq in slide.acquisitions:
                 acq_dir = out_dir
                 
-                name = clean_name(acq.description)
+                name = acq.description
                 tiff_path = acq_dir / f"{name}.ome.tiff"
 
                 ome_xml = build_ome_xml([acq], tiff_path.name, dtype)
@@ -142,4 +142,5 @@ def mcd_convert(mcd_path, out_dir, dtype, compression):
 
 if __name__ == '__main__':
     main()
+
 
