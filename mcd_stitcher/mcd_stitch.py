@@ -65,10 +65,6 @@ def make_out_dir(input_path: Path, base_out: Optional[Path]) -> Path:
     base = base_out if base_out else input_path.parent
     return base / "TIFF_Stitched"
 
-def clean_name(name: str) -> str:
-    bad_chars = r'[\/:*?"<>|]' if platform.system() == 'Windows' else r'[|/:*?[$!]'
-    return re.sub(bad_chars, '_', name).strip()
-
 def build_ome_xml(shape, channels, px, tiff_name, dtype):
     C, H, W = shape
 
@@ -236,3 +232,4 @@ def mcd_stitch(mcd_path, out_dir, dtype, compression):
 
 if __name__ == '__main__':
     main()
+
