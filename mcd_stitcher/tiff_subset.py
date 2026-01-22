@@ -1,10 +1,8 @@
 # ---------------------- Imports ----------------------
-import re
 import uuid
-import platform
 import time
 from pathlib import Path
-from typing import List, Optional, Union
+from typing import List, Optional
 
 import click
 import numpy as np
@@ -248,7 +246,7 @@ def list_channels_fn(tiff_path: Path):
 def subset_single_file(
     tiff_path: Path,
     out_dir: Path,
-    filter_str: Optional[str],
+    filter_str: str,
     compression: str,
     output_type: str,
     pyramid: bool = False, 
@@ -317,7 +315,6 @@ def subset_directory(
         target_dir = out_dir / rel_folder
         target_dir.mkdir(parents=True, exist_ok=True)
 
-        tiff_files = list(folder.glob("*.ome.tiff"))
         for tiff_path in tiff_files:
             try:
                 subset_single_file(tiff_path, target_dir, filter_str, compression, output_type,pyramid=pyramid)
@@ -333,3 +330,4 @@ def subset_directory(
 
 if __name__ == "__main__":
     main()
+
