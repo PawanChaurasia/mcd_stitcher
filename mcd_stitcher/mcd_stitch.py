@@ -1,61 +1,54 @@
 # ---------------------- Imports ----------------------
-import re
-import uuid
-import shutil
-import platform
-import time
-from pathlib import Path
-from typing import Optional
-from datetime import datetime
-
 import click
 import numpy as np
+import time
 import tifffile as tiff
+import uuid
+import xml.etree.ElementTree as ET
+
+from datetime import datetime
+from pathlib import Path
 from readimc import MCDFile
 from skimage.draw import polygon
 from skimage.transform import resize
-
-import xml.etree.ElementTree as ET
+from typing import Optional
 from xml.dom import minidom
-
 
 # ---------------------- CLI ----------------------
 @click.command(name='mcd_stitch')
-@click.option('-d', '--output_type',type=click.Choice(['uint16', 'float32'], case_sensitive=False),default='uint16',show_default=True)
+@click.option('-d','--output_type',type=click.Choice(['uint16', 'float32'], case_sensitive=False),default='uint16',show_default=True)
 @click.option('-c','--compression',type=click.Choice(['None', 'LZW', 'zstd'], case_sensitive=True),default='zstd',show_default=True)
-@click.argument('input_path', type=click.Path(exists=True, path_type=Path))
-@click.argument('output_path', type=click.Path(exists=False, path_type=Path), required=False)
+@click.option('-r','--roi',is_flag=True,help="Interactively select which ROIs to stitch.")
+@click.argument('input_path',type=click.Path(exists=True, path_type=Path))
+@click.argument('output_path',type=click.Path(exists=False, path_type=Path), required=False)
 
-def main(output_type, compression, input_path, output_path):
+def main(output_type, compression, roi, input_path, output_path):
     start_all = time.time()
 
-    try:
-        if input_path.is_file() and input_path.suffix == '.mcd':
-            out_dir = make_out_dir(input_path, output_path)
-            make_dir(out_dir)
-            print(f"Processing MCD: {input_path}")
-            mcd_stitch(input_path, out_dir, output_type, compression)
-            print(f"Sucessfully Processed in {round(time.time() - start_all, 1)}s")
-
-        elif input_path.is_dir():
-            for mcd in input_path.glob('*.mcd'):
-                start_mcd = time.time()
-                out_dir = make_out_dir(mcd, output_path)
-                make_dir(out_dir)
-                print(f"Processing MCD: {mcd}")
-                mcd_stitch(mcd, out_dir, output_type, compression)
-                elapsed_mcd = time.time() - start_mcd
-                print(f"Successfully processed {mcd.name} in {elapsed_mcd:.1f}s")
-            elapsed_all = time.time() - start_all
-            print(f"Finished all MCDs in {elapsed_all:.1f}s")
+    if roi and input_path.is_dir():
+        raise click.UsageError("--roi can only be used with a single .mcd file")
+        
+    if input_path.is_file() and input_path.suffix.lower() == '.mcd':
+        mcd_files = [input_path]
+        
+    elif input_path.is_dir():
+        mcd_files = list(input_path.glob("*.mcd"))
+        if not mcd_files:
+            raise click.UsageError("No .mcd files found in folder")
+        print(f"Found {len(mcd_files)} MCD files")
             
-        else:
-            print("Input must be an .mcd file or a folder of .mcd files")
+    else:
+        raise click.UsageError("Input must be an .mcd file or a folder of .mcd files")
+    
+    for mcd in mcd_files:
+        start_mcd = time.time()
+        out_dir = make_out_dir(mcd, output_path)
+        make_dir(out_dir)
+        print(f"Processing MCD: {mcd}")
+        mcd_stitch(mcd, out_dir, output_type, compression, select_roi=roi if len(mcd_files) == 1 else False)
+        print(f"Successfully processed {mcd.name} in {time.time() - start_mcd:.1f}s")
 
-    except Exception:
-        print("Fatal error")
-        raise
-
+    print(f"Finished in {time.time() - start_all:.1f}s")
 
 # ---------------------- Helpers ----------------------
 def make_dir(path: Path):
@@ -98,65 +91,117 @@ def build_ome_xml(shape, channels, px, tiff_name, dtype):
 
     return minidom.parseString(ET.tostring(ome)).toprettyxml(indent='  ')
 
+def select_rois(rois):
+    if not rois:
+        raise ValueError("No ROIs found")
 
-# ---------------------- Core Function ----------------------
-def mcd_stitch(mcd_path, out_dir, dtype, compression):
-    
+    print("\n" + "="*90)
+    print("DETECTED ROIs")
+    print("="*90)
+    print(f"{'Idx':<4} | {'Description':<40} | {'Timestamp':<19} | {'Size (W×H)':<12}")
+    print("-"*90)
+
+    for idx, r in enumerate(rois):
+        desc = (r["description"] or "").strip()
+        if len(desc) > 40:
+            desc = desc[:37] + "..."
+        ts = r["timestamp"]
+        try:
+            ts = datetime.fromisoformat(ts).strftime("%Y-%m-%d %H:%M:%S")
+        except Exception:
+            pass
+        print(f"{idx:<4} | {desc:<40} | {ts:<19} | {r['width']:>4} × {r['height']:<4}")
+
+    print("="*90)
+
+    user = input('\nEnter comma-separated indices to KEEP (e.g., 0,3,5), or press Enter to keep all: ').strip()
+
+    if user == "":
+        print("✓ Keeping all ROIs.")
+        return rois
+
+    try:
+        indices = [int(p.strip()) for p in user.split(",") if p.strip()]
+    except Exception:
+        raise ValueError("Invalid input. Expected comma-separated integers.")
+
+    max_idx = len(rois) - 1
+    for i in indices:
+        if i < 0 or i > max_idx:
+            raise ValueError(f"Invalid index {i}. Valid range: 0..{max_idx}")
+
+    seen = set()
+    selected = []
+    for i in indices:
+        if i not in seen:
+            seen.add(i)
+            selected.append(rois[i])
+
+    print(f"✓ Keeping {len(selected)} of {len(rois)} ROIs.")
+
+    return selected
+
+# ---------------------- Core Functions ----------------------
+def mcd_stitch(mcd_path, out_dir, dtype, compression, select_roi=False):
     out_tiff = out_dir / f"{mcd_path.stem}_stitched.ome.tiff"
-
-    roi_coords = {}
-    images = {}
-    pixel_size = {}
-    roi_time = {}
-    channel_labels = []
+    roi_list = []    
 
     # ---------------- Read MCD ----------------
     with MCDFile(mcd_path) as mcd:
         for slide in mcd.slides:
             for acq in slide.acquisitions:
-                if acq.roi_points_um:
-                    roi_coords[acq.description] = acq.roi_points_um
-                    pixel_size[acq.description] = (acq.pixel_size_x_um, acq.pixel_size_y_um)
-                    images[acq.description] = mcd.read_acquisition(acq)
-                    roi_time[acq.description] = datetime.fromisoformat(acq.metadata["StartTimeStamp"])
-                    if not channel_labels:
-                        channel_labels = acq.channel_labels
+                if not acq.roi_points_um:
+                    continue
 
-    if not images:
+                img = mcd.read_acquisition(acq)
+                roi_list.append({
+                    "description": acq.description,
+                    "timestamp": acq.metadata.get("StartTimeStamp"),
+                    "image": img,
+                    "roi_coords": acq.roi_points_um,
+                    "pixel_size": (acq.pixel_size_x_um, acq.pixel_size_y_um),
+                    "width": img.shape[2],
+                    "height": img.shape[1],
+                    "channel_labels": acq.channel_labels
+                })
+
+    if not roi_list:
         raise RuntimeError("No ROIs found")
+        
+    if select_roi:
+        roi_list = select_rois(roi_list)
+    
+    # ---------------- ROI order ----------------
+    roi_list = sorted(roi_list,key=lambda r: datetime.fromisoformat(r["timestamp"]),reverse=True)
+    channel_labels = roi_list[0]["channel_labels"]
 
     # ---------------- Global canvas ----------------
-    xs = [x for roi in roi_coords.values() for x, _ in roi]
-    ys = [y for roi in roi_coords.values() for _, y in roi]
+    xs = [x for r in roi_list for x, _ in r["roi_coords"]]
+    ys = [y for r in roi_list for _, y in r["roi_coords"]]
+
 
     min_x_um, max_x_um = min(xs), max(xs)
     min_y_um, max_y_um = min(ys), max(ys)
 
-    rois_translated = {
-        name: [(x - min_x_um, y - min_y_um) for x, y in points]
-        for name, points in roi_coords.items()
-    }
+    for r in roi_list:
+        r["roi_translated"] = [(x - min_x_um, y - min_y_um) for x, y in r["roi_coords"]]
 
     canvas_width_um = max_x_um - min_x_um
     canvas_height_um = max_y_um - min_y_um
-    px_sizes = np.array(list(pixel_size.values()))
-    global_px = np.min(px_sizes)
+    global_px = min(px for r in roi_list for px in r["pixel_size"])
     
     canvas_width_px = int(np.ceil(canvas_width_um / global_px))
     canvas_height_px = int(np.ceil(canvas_height_um / global_px))
 
-    channels = next(iter(images.values())).shape[0]
+    channels = roi_list[0]["image"].shape[0]
     canvas = np.zeros((channels, canvas_height_px, canvas_width_px), np.float32)
     written = np.zeros((canvas_height_px, canvas_width_px), bool)
 
-    # ---------------- ROI order ----------------
-    roi_order = sorted(images.keys(), key=lambda k: roi_time[k], reverse=True)
-
     # ---------------- Paste ROIs ----------------
-    for name in roi_order:
-        img = images[name]
-        roi = rois_translated[name]
-        px_x, px_y = pixel_size[name]
+    for r in roi_list:
+        img = r["image"]
+        roi = r["roi_translated"]
+        px_x, px_y = r["pixel_size"]
         C, h, w = img.shape
 
         scale_x = px_x / global_px
@@ -164,17 +209,22 @@ def mcd_stitch(mcd_path, out_dir, dtype, compression):
 
         h_new = int(np.ceil(h * scale_y))
         w_new = int(np.ceil(w * scale_x))
-
-        resized = np.zeros((C, h_new, w_new), np.float32)
-        for c in range(C):
-            resized[c] = resize(
-                img[c].astype(np.float32),
-                (h_new, w_new),
-                order=1,
-                mode='reflect',
-                preserve_range=True,
-                anti_aliasing=True
-            )
+        
+        if np.isclose(px_x, global_px) and np.isclose(px_y, global_px):
+            resized = img.astype(np.float32)
+        
+        else:            
+            resized = np.stack([
+                resize(
+                    img[c].astype(np.float32),
+                    (h_new, w_new),
+                    order=1,
+                    mode='reflect',
+                    preserve_range=True,
+                    anti_aliasing=True
+                )
+                for c in range(C)
+            ])
 
         xs = np.array([x for x, _ in roi])
         ys = np.array([y for _, y in roi])
@@ -195,15 +245,18 @@ def mcd_stitch(mcd_path, out_dir, dtype, compression):
 
         h_slice = y1 - y0
         w_slice = x1 - x0
-
+        
+        written_slice = written[y0:y1, x0:x1]
+        valid_global = mask[:h_slice, :w_slice]
+        
         for c in range(C):
             src = resized[c, :h_slice, :w_slice]
             dst = canvas[c, y0:y1, x0:x1]
-            valid = mask[:h_slice, :w_slice] & (src > 0)
-            write_mask = valid & (~written[y0:y1, x0:x1])
+            valid = valid_global & (src > 0)
+            write_mask = valid & (~written_slice)
             dst[write_mask] = src[write_mask]
 
-        written[y0:y1, x0:x1][valid] = True
+        written[y0:y1, x0:x1][write_mask] = True
         
     # ---------------- Save ----------------
     if dtype == "uint16":
@@ -213,13 +266,7 @@ def mcd_stitch(mcd_path, out_dir, dtype, compression):
         canvas = canvas.astype(np.float32)
         ome_dtype = "float"
 
-    ome_xml = build_ome_xml(
-        canvas.shape,
-        channel_labels,
-        global_px,
-        out_tiff.name,
-        ome_dtype
-    )
+    ome_xml = build_ome_xml(canvas.shape, channel_labels, global_px, out_tiff.name, ome_dtype)
 
     with tiff.TiffWriter(out_tiff, bigtiff=True) as writer:
         for c in range(canvas.shape[0]):
@@ -232,4 +279,3 @@ def mcd_stitch(mcd_path, out_dir, dtype, compression):
 
 if __name__ == '__main__':
     main()
-
