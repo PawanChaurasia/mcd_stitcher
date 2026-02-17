@@ -39,12 +39,12 @@ mcd_stitch <input_path> [<output_path>] [OPTIONS]
 
 **Arguments:**
 - **input_path:** Path to an MCD file or a folder containing `.mcd` files.
-- **output_path:** (Optional) Output folder for stitched OME-TIFFs. Defaults to: `<input_path>/TIFF_stitched`.
+- **output_path:** (Optional) Output folder for stitched OME-TIFFs. Defaults to: `<input_path>/TIFF_stitched`
 
 **Options:**
 - **-d, --output_type [uint16 | float32]:**   Output pixel data type.  Default: `uint16`
 - **-c, --compression [None | LZW | zstd]:**  Compression method for the output OME-TIFFs. Default: `zstd`
-
+- **-r, --roi:** Interactively select which ROIs to stitch.
 
 **Example:**
 1. **Stitch with default output folder and options**
@@ -67,7 +67,7 @@ mcd_convert <input_path> [<output_path>] [OPTIONS]
 ```  
 **Arguments:**
 - **input_path:** Path to an MCD file or a folder containing `.mcd` files.
-- **output_path:** (Optional) Output folder for stitched OME-TIFFs. Defaults to: `<input_path>/TIFF_Converted`.
+- **output_path:** (Optional) Output folder for stitched OME-TIFFs. Defaults to: `<input_path>/TIFF_Converted`
 
 **Options:**
 - **-d, --output_type [uint16 | float32]:**   Output pixel data type.  Default: `uint16`
