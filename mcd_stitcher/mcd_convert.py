@@ -1,20 +1,15 @@
 # ---------------------- Imports ----------------------
-import re
-import uuid
-import shutil
-import platform
-import time
-from pathlib import Path
-from typing import Optional
-
 import click
 import numpy as np
+import time
 import tifffile as tiff
-from readimc import MCDFile
-
+import uuid
 import xml.etree.ElementTree as ET
-from xml.dom import minidom
 
+from pathlib import Path
+from readimc import MCDFile
+from typing import Optional
+from xml.dom import minidom
 
 # ---------------------- CLI ----------------------
 @click.command(name='mcd_convert')
@@ -26,31 +21,27 @@ from xml.dom import minidom
 def main(output_type, compression, input_path, output_path):
     start_all = time.time()
 
-    try:
-        if input_path.is_file() and input_path.suffix == '.mcd':
-            out_dir = make_out_dir(input_path, output_path)
-            print(f"Processing MCD: {input_path}")
-            mcd_convert(input_path, out_dir, output_type, compression)
-            print(f"Sucessfully Processed in {round(time.time() - start_all, 1)}s")
-            
-        elif input_path.is_dir():
-            for mcd in input_path.glob('*.mcd'):
-                start_mcd = time.time()
-                out_dir = make_out_dir(mcd, output_path)
-                print(f"Processing MCD: {mcd}")
-                mcd_convert(mcd, out_dir, output_type, compression)
-                elapsed_mcd = time.time() - start_mcd
-                print(f"Successfully processed {mcd.name} in {elapsed_mcd:.1f}s")                
-            elapsed_all = time.time() - start_all
-            print(f"Finished all MCDs in {elapsed_all:.1f}s")
-            
-        else:
-            print("Input must be an .mcd file or a folder of .mcd files")
+    if input_path.is_file() and input_path.suffix.lower() == '.mcd':
+        mcd_files = [input_path]
 
-    except Exception:
-        print("Fatal error")
-        raise
+    elif input_path.is_dir():
+        mcd_files = list(input_path.glob('*.mcd'))
+        if not mcd_files:
+            raise click.ClickException("No .mcd files found in folder")
+        print(f"Found {len(mcd_files)} MCD files")
 
+    else:
+        raise click.ClickException("Input must be an .mcd file or a folder of .mcd files")
+
+    for mcd in mcd_files:
+        start_mcd = time.time()
+        out_dir = make_out_dir(mcd, output_path)
+        make_dir(out_dir)
+        print(f"Processing MCD: {mcd}")
+        mcd_convert(mcd, out_dir, output_type, compression)
+        print(f"Successfully processed {mcd.name} in {time.time() - start_mcd:.1f}s")
+
+    print(f"Finished all MCDs in {time.time() - start_all:.1f}s")
 
 # ---------------------- Helpers ----------------------
 def make_dir(path: Path):
@@ -63,14 +54,10 @@ def make_out_dir(input_path: Path, base_out: Optional[Path]) -> Path:
 def build_ome_xml(acqs, tiff_name, dtype):
     ome = ET.Element('OME', {
         'xmlns': 'http://www.openmicroscopy.org/Schemas/OME/2016-06',
-        'Creator': 'MCD_Stitcher'
+        'Creator': 'Pawan Chaurasia, MCD_Stitcher v2.1.0'
     })
     
-    ome_pixel_type = {
-    'uint16': 'uint16',
-    'float32': 'float'
-    }[dtype]
-
+    ome_pixel_type = {'uint16': 'uint16', 'float32': 'float'}[dtype]
     ET.SubElement(ome, 'Instrument', {'ID': 'Instrument:StandardBioToolsInstrument'})
 
     for acq in acqs:
@@ -95,42 +82,37 @@ def build_ome_xml(acqs, tiff_name, dtype):
             ET.SubElement(pixels, 'Channel', {'ID': f'Channel:{acq.id}:{i}', 'Name': acq.channel_labels[i], 'SamplesPerPixel': '1'})
         
         for i in range(acq.num_channels):
-            td = ET.SubElement(pixels, 'TiffData', {
-                'FirstC': str(i),'FirstT':'0', 'FirstZ':'0', 'PlaneCount':'1','IFD': str(i)})
+            td = ET.SubElement(pixels, 'TiffData', {'FirstC': str(i),'FirstT':'0', 'FirstZ':'0', 'IFD': str(i), 'PlaneCount':'1'})
             ET.SubElement(td, 'UUID', {'FileName': tiff_name}).text = f'urn:uuid:{uuid.uuid4()}'
 
-    xml = minidom.parseString(ET.tostring(ome)).toprettyxml(indent='  ')
-
-    return xml
-
+    return minidom.parseString(ET.tostring(ome)).toprettyxml(indent='  ')
 
 # ---------------------- Core Function ----------------------
 def mcd_convert(mcd_path, out_dir, dtype, compression):
-    strict = True
-
+    # ---------------- Read MCD ----------------
     with MCDFile(mcd_path) as mcd:
         make_dir(out_dir)
         for slide in mcd.slides:            
             for acq in slide.acquisitions:
-                acq_dir = out_dir
-                
+                acq_dir = out_dir            
                 name = acq.description
-                tiff_path = acq_dir / f"{name}.ome.tiff"
-
-                ome_xml = build_ome_xml([acq], tiff_path.name, dtype)
+                tiff_path = acq_dir / f"{name}.ome.tiff"                
 
                 try:
-                    img = mcd.read_acquisition(acq, strict=strict)
+                    img = mcd.read_acquisition(acq, strict=True)
                 except OSError:
-                    strict = False
-                    img = mcd.read_acquisition(acq, strict=strict)
-
+                    print(f"Warning: strict read failed for {acq.description}. Retrying in recovery mode.")
+                    img = mcd.read_acquisition(acq, strict=False)
+                
+                # ---------------- Save ----------------
                 if dtype == 'uint16':
-                    img = img.astype(np.uint16)
+                    img = np.clip(img, 0, 65535).astype(np.uint16)
                 else:
                     img = img.astype(np.float32)
+                
+                ome_xml = build_ome_xml([acq], tiff_path.name, dtype)
 
-                with tiff.TiffWriter(tiff_path) as writer:
+                with tiff.TiffWriter(tiff_path, bigtiff=True) as writer:
                     for i in range(img.shape[0]):
                         writer.write(
                             img[i],
@@ -142,5 +124,3 @@ def mcd_convert(mcd_path, out_dir, dtype, compression):
 
 if __name__ == '__main__':
     main()
-
-
