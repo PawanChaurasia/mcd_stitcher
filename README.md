@@ -1,12 +1,8 @@
 # MCD STITCHER
 
-<p align="left">
-  <a href="https://pypi.org/project/mcd_stitcher/">
-    <img src="https://img.shields.io/pypi/v/mcd_stitcher?label=PyPI&cache_bust=1%20Version&color=3fb950&style=flat-square"></a>
-  <img src="https://img.shields.io/badge/Python-3.11%20|%203.12%20|%203.13-blue?style=flat-square" alt="Python Versions">
-  <a href="https://github.com/PawanChaurasia/mcd_stitcher/blob/main/LICENSE">
-    <img src="https://img.shields.io/badge/License-GPLv3-lightgrey?style=flat-square" alt="License: GPLv3"></a>
-</p>
+[![PyPI Version](https://img.shields.io/pypi/v/mcd_stitcher?label=PyPI&color=3fb950&style=flat-square)](https://pypi.org/project/mcd_stitcher/)
+![Python Versions](https://img.shields.io/badge/Python-3.11%20%7C%203.12%20%7C%203.13-blue?style=flat-square)
+[![License: GPLv3](https://img.shields.io/badge/License-GPLv3-lightgrey?style=flat-square)](https://github.com/PawanChaurasia/mcd_stitcher/blob/main/LICENSE)
 
 **MCD Stitcher** is a high-performance Python package designed to streamline the processing of Imaging Mass Cytometry (IMC) data. It simplifies the conversion of `.mcd` files into standards-compliant OME-TIFFs, handles ROI stitching, and provides tools for channel subsetting, pyramid generation and OME-TIFF compression.
 
