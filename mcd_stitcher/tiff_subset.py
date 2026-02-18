@@ -1,17 +1,16 @@
 # ---------------------- Imports ----------------------
-import uuid
-import time
-from pathlib import Path
-from typing import List, Optional
-
 import click
 import numpy as np
+import time
 import tifffile as tiff
-
-import xml.etree.ElementTree as ET
-from xml.dom import minidom
-from datetime import datetime
 import traceback
+import uuid
+import xml.etree.ElementTree as ET
+
+from datetime import datetime
+from pathlib import Path
+from typing import List, Optional
+from xml.dom import minidom
 
 # ---------------------- CLI ----------------------
 @click.command(name='tiff_subset')
@@ -25,39 +24,57 @@ import traceback
 def main(output_type, compression, list_channels, filter, pyramid, input_path):
     start_all = time.time()
 
-    try:
-        input_path = Path(input_path)
+    if input_path.is_file() and input_path.suffix.lower() == ".tiff":
+        tiff_files = [input_path]
+        input_root = input_path.parent
+        
+    elif input_path.is_dir():
+        tiff_files = list(input_path.rglob("*.tiff"))
+        if not tiff_files:
+            raise click.ClickException("No .tiff files found in folder")
+        print(f"Found {len({f.parent for f in tiff_files})} folders")
+        input_root = input_path
 
-        if not (list_channels or filter or pyramid):
-            click.echo(click.get_current_context().get_help())
-            click.echo("\nError: No action specified.")
-            return
+    else:
+        raise click.ClickException("Input must be a .tiff file or a folder of .tiff files")
+        
+    if not (list_channels or filter or pyramid):
+        raise click.ClickException("No action specified.")
 
-        if list_channels:
-            if not input_path.is_file():
-                raise click.ClickException("--list-channels requires a single file")
-            list_channels_fn(input_path)
-            return
+    if list_channels:
+        if len(tiff_files) != 1:
+            raise click.ClickException("--list-channels requires a single .tiff file")
+        list_channels_fn(tiff_files[0])
+    
+    current_folder = None
+    folder_start = None
 
-        if input_path.is_file():
-            out_dir = input_path.parent
-            subset_single_file(input_path, out_dir, filter, compression, output_type, pyramid=pyramid)
+    for tiff_path in tiff_files:
+        folder = tiff_path.parent
+        if folder != current_folder:
+            if current_folder is not None:
+                elapsed = time.time() - folder_start
+                print(f"Successfully processed folder {current_folder.name} in {elapsed:.1f}s")
+            current_folder = folder
+            folder_start = time.time()
+            print(f"Processing folder: {current_folder.name}")
+        try:
+            relative = tiff_path.relative_to(input_root)
+            target_dir = input_root / relative.parent
+            subset_single_file(tiff_path, target_dir, filter, compression, output_type, pyramid=pyramid)
 
-        elif input_path.is_dir():
-            out_dir = input_path
-            subset_directory(input_path, out_dir, filter, compression, output_type, pyramid=pyramid)
-            
-        else:
-            print("Input must be an .tiff file or a folder of .tiff files")
+        except Exception as e:
+            log_path = input_root / "ome_subset_errors.log"
+            with open(log_path, "a") as f:
+                f.write(f"{datetime.now()} - {tiff_path}\n{e}\n{traceback.format_exc()}")
+                
+    if current_folder is not None:
+        elapsed = time.time() - folder_start
+        print(f"Successfully processed folder {current_folder.name} in {elapsed:.1f}s")
+        
+    print(f"Finished all folders in {round(time.time() - start_all, 1)}s")
 
-        print(f"Finished in {round(time.time() - start_all, 1)}s")
-
-    except Exception:
-        print("Fatal error")
-        raise
-
-
-#---------------------- Helpers ----------------------
+# ---------------------- Helpers ----------------------
 def read_ome_tiff(tiff_path: Path):
     with tiff.TiffFile(tiff_path) as tif:
         ome_xml = tif.ome_metadata
@@ -76,8 +93,7 @@ def read_ome_tiff(tiff_path: Path):
         phys_y = float(pixels_elem.get("PhysicalSizeY", "1.0"))
 
         if len(tif.series) == size_c:
-            image_data = np.stack([s.asarray() for s in tif.series],axis=0)
-
+            image_data = np.stack([s.asarray() for s in tif.series], axis=0)
         else:
             series = tif.series[0]
             level0 = series.levels[0]
@@ -85,7 +101,7 @@ def read_ome_tiff(tiff_path: Path):
             if len(level0.pages) < size_c:
                 raise ValueError(f"Found {len(level0.pages)} planes, expected {size_c}")
 
-            image_data = np.stack([level0.pages[i].asarray() for i in range(size_c)],axis=0)
+            image_data = np.stack([level0.pages[i].asarray() for i in range(size_c)], axis=0)
 
     if image_data.shape[0] != size_c:
         raise ValueError(
@@ -110,7 +126,7 @@ def build_ome_xml(
 
     ome = ET.Element('OME', {
         'xmlns': 'http://www.openmicroscopy.org/Schemas/OME/2016-06',
-        'Creator': 'MCD_Stitcher',
+        'Creator': 'Pawan Chaurasia, MCD_Stitcher v2.1.0'
     })
 
     img = ET.SubElement(ome, 'Image', {'ID': 'Image:0', 'Name': tiff_name})
@@ -161,33 +177,20 @@ def write_pyramidal_ome_tiff(
         image_data = image_data.astype(np.float32)
 
     pyramid_levels = create_pyramid(image_data, levels=levels)
-
-    comp_args = {"level": 15} if compression == "zstd" else None
-    comp = None if compression == "None" else compression
-
-    ome_xml = build_ome_xml(
-        image_data,
-        channel_names,
-        output_path.name,
-        physical_x=phys_x,
-        physical_y=phys_y,
-    )
+    ome_xml = build_ome_xml(image_data, channel_names, output_path.name, physical_x=phys_x, physical_y=phys_y)
 
     with tiff.TiffWriter(output_path, bigtiff=True) as tif:
         options = dict(
             tile=(256, 256),
-            compression=comp,
-            compressionargs=comp_args,
+            compression=compression,
             photometric="minisblack",
             metadata={"axes": "CYX"},
         )
 
         for i, level_data in enumerate(pyramid_levels):
             if i == 0:
-                # First image with SubIFDs pointing to lower resolutions
                 tif.write(level_data, subifds=levels - 1, description=ome_xml, **options)
             else:
-                # Lower resolution levels
                 tif.write(level_data, subfiletype=1, **options)
 
 def write_ome_tiff(
@@ -204,24 +207,14 @@ def write_ome_tiff(
     else:
         image_data = image_data.astype(np.float32)
 
-    ome_xml = build_ome_xml(
-        image_data,
-        channel_names,
-        output_path.name,
-        physical_x=phys_x,
-        physical_y=phys_y,
-    )
+    ome_xml = build_ome_xml(image_data, channel_names, output_path.name, physical_x=phys_x, physical_y=phys_y)
 
-    comp_args = {"level": 15} if compression == "zstd" else None
-    comp = None if compression == "None" else compression
-
-    with tiff.TiffWriter(output_path) as writer:
+    with tiff.TiffWriter(output_path, bigtiff=True) as writer:
         for i in range(image_data.shape[0]):
             writer.write(
                 image_data[i],
                 tile=(256, 256),
-                compression=comp,
-                compressionargs=comp_args,
+                compression=compression,
                 photometric="minisblack",
                 description=ome_xml if i == 0 else None,
             )
@@ -281,53 +274,9 @@ def subset_single_file(
     output_path = out_dir / f"{base}{suffix_str}.ome.tiff"
 
     if pyramid:
-        write_pyramidal_ome_tiff(
-            subset_img, subset_names, output_path, compression, output_type, phys_x, phys_y
-        )
+        write_pyramidal_ome_tiff(subset_img, subset_names, output_path, compression, output_type, phys_x, phys_y)
     else:
-        write_ome_tiff(
-            subset_img, subset_names, output_path, compression, output_type, phys_x, phys_y
-        )
-
-def subset_directory(
-    input_dir: Path,
-    out_dir: Path,
-    filter_str: str,
-    compression: str,
-    output_type: str,
-    pyramid: bool = False,
-):
-    start_all = time.time()
-    input_dir = input_dir.resolve()
-    out_dir.mkdir(parents=True, exist_ok=True)
-
-    folders = {t.parent for t in input_dir.rglob("*.ome.tiff")}
-    if not folders:
-        click.echo("No OME-TIFF files found to process.")
-        return
-
-    for folder in sorted(folders):
-        rel_folder = folder.relative_to(input_dir)
-        tiff_files = list(folder.glob("*.ome.tiff"))
-        click.echo(f"Processing {len(tiff_files)} TIFFs in {rel_folder}")
-        start_folder = time.time()
-
-        target_dir = out_dir / rel_folder
-        target_dir.mkdir(parents=True, exist_ok=True)
-
-        for tiff_path in tiff_files:
-            try:
-                subset_single_file(tiff_path, target_dir, filter_str, compression, output_type,pyramid=pyramid)
-            except Exception as e:
-                log_path = out_dir / "ome_subset_errors.log"
-                with open(log_path, "a") as f:
-                    f.write(
-                        f"{datetime.now()} - {tiff_path}\n{e}\n{traceback.format_exc()}\n"
-                    )
-
-        elapsed_folder = time.time() - start_folder
-        click.echo(f"Successfully processed {rel_folder} in {elapsed_folder:.1f}s\n")
+        write_ome_tiff(subset_img, subset_names, output_path, compression, output_type, phys_x, phys_y)
 
 if __name__ == "__main__":
     main()
-
