@@ -26,7 +26,7 @@ def main(output_type, compression, roi, input_path, output_path):
     start_all = time.time()
 
     if roi and input_path.is_dir():
-        raise click.UsageError("--roi can only be used with a single .mcd file")
+        raise click.ClickException("--roi can only be used with a single .mcd file")
         
     if input_path.is_file() and input_path.suffix.lower() == '.mcd':
         mcd_files = [input_path]
@@ -34,11 +34,11 @@ def main(output_type, compression, roi, input_path, output_path):
     elif input_path.is_dir():
         mcd_files = list(input_path.glob("*.mcd"))
         if not mcd_files:
-            raise click.UsageError("No .mcd files found in folder")
+            raise click.ClickException("No .mcd files found in folder")
         print(f"Found {len(mcd_files)} MCD files")
             
     else:
-        raise click.UsageError("Input must be an .mcd file or a folder of .mcd files")
+        raise click.ClickException("Input must be an .mcd file or a folder of .mcd files")
     
     for mcd in mcd_files:
         start_mcd = time.time()
@@ -48,7 +48,7 @@ def main(output_type, compression, roi, input_path, output_path):
         mcd_stitch(mcd, out_dir, output_type, compression, select_roi=roi if len(mcd_files) == 1 else False)
         print(f"Successfully processed {mcd.name} in {time.time() - start_mcd:.1f}s")
 
-    print(f"Finished in {time.time() - start_all:.1f}s")
+    print(f"Finished all MCDs in {time.time() - start_all:.1f}s")
 
 # ---------------------- Helpers ----------------------
 def make_dir(path: Path):
@@ -63,7 +63,7 @@ def build_ome_xml(shape, channels, px, tiff_name, dtype):
 
     ome = ET.Element('OME', {
         'xmlns': 'http://www.openmicroscopy.org/Schemas/OME/2016-06',
-        'Creator': 'MCD_Stitcher'
+        'Creator': 'Pawan Chaurasia, MCD_Stitcher v2.1.0'
     })
 
     ET.SubElement(ome, 'Instrument', {'ID': 'Instrument:StandardBioToolsInstrument'})
@@ -86,7 +86,7 @@ def build_ome_xml(shape, channels, px, tiff_name, dtype):
         ET.SubElement(pixels, 'Channel', {'ID': f'Channel:Stitched:{i}', 'Name': ch, 'SamplesPerPixel': '1'})
 
     for i in range(C):
-        td = ET.SubElement(pixels, 'TiffData', {'FirstC': str(i), 'FirstT': '0', 'FirstZ': '0', 'IFD': str(i), 'PlaneCount':'1' })
+        td = ET.SubElement(pixels, 'TiffData', {'FirstC': str(i), 'FirstT': '0', 'FirstZ': '0', 'IFD': str(i), 'PlaneCount':'1'})
         ET.SubElement(td, 'UUID', {'FileName': tiff_name}).text = f'urn:uuid:{uuid.uuid4()}'
 
     return minidom.parseString(ET.tostring(ome)).toprettyxml(indent='  ')
@@ -144,7 +144,7 @@ def select_rois(rois):
 # ---------------------- Core Functions ----------------------
 def mcd_stitch(mcd_path, out_dir, dtype, compression, select_roi=False):
     out_tiff = out_dir / f"{mcd_path.stem}_stitched.ome.tiff"
-    roi_list = []    
+    roi_metadata = []    
 
     # ---------------- Read MCD ----------------
     with MCDFile(mcd_path) as mcd:
@@ -154,7 +154,7 @@ def mcd_stitch(mcd_path, out_dir, dtype, compression, select_roi=False):
                     continue
 
                 img = mcd.read_acquisition(acq)
-                roi_list.append({
+                roi_metadata.append({
                     "description": acq.description,
                     "timestamp": acq.metadata.get("StartTimeStamp"),
                     "image": img,
@@ -165,40 +165,40 @@ def mcd_stitch(mcd_path, out_dir, dtype, compression, select_roi=False):
                     "channel_labels": acq.channel_labels
                 })
 
-    if not roi_list:
+    if not roi_metadata:
         raise RuntimeError("No ROIs found")
         
     if select_roi:
-        roi_list = select_rois(roi_list)
+        roi_metadata = select_rois(roi_metadata)
     
     # ---------------- ROI order ----------------
-    roi_list = sorted(roi_list,key=lambda r: datetime.fromisoformat(r["timestamp"]),reverse=True)
-    channel_labels = roi_list[0]["channel_labels"]
+    roi_metadata = sorted(roi_metadata,key=lambda r: datetime.fromisoformat(r["timestamp"]),reverse=True)
+    channel_labels = roi_metadata[0]["channel_labels"]
 
     # ---------------- Global canvas ----------------
-    xs = [x for r in roi_list for x, _ in r["roi_coords"]]
-    ys = [y for r in roi_list for _, y in r["roi_coords"]]
+    xs = [x for r in roi_metadata for x, _ in r["roi_coords"]]
+    ys = [y for r in roi_metadata for _, y in r["roi_coords"]]
 
 
     min_x_um, max_x_um = min(xs), max(xs)
     min_y_um, max_y_um = min(ys), max(ys)
 
-    for r in roi_list:
+    for r in roi_metadata:
         r["roi_translated"] = [(x - min_x_um, y - min_y_um) for x, y in r["roi_coords"]]
 
     canvas_width_um = max_x_um - min_x_um
     canvas_height_um = max_y_um - min_y_um
-    global_px = min(px for r in roi_list for px in r["pixel_size"])
+    global_px = min(px for r in roi_metadata for px in r["pixel_size"])
     
     canvas_width_px = int(np.ceil(canvas_width_um / global_px))
     canvas_height_px = int(np.ceil(canvas_height_um / global_px))
 
-    channels = roi_list[0]["image"].shape[0]
+    channels = roi_metadata[0]["image"].shape[0]
     canvas = np.zeros((channels, canvas_height_px, canvas_width_px), np.float32)
     written = np.zeros((canvas_height_px, canvas_width_px), bool)
 
     # ---------------- Paste ROIs ----------------
-    for r in roi_list:
+    for r in roi_metadata:
         img = r["image"]
         roi = r["roi_translated"]
         px_x, px_y = r["pixel_size"]
@@ -250,13 +250,12 @@ def mcd_stitch(mcd_path, out_dir, dtype, compression, select_roi=False):
         valid_global = mask[:h_slice, :w_slice]
         
         for c in range(C):
-            src = resized[c, :h_slice, :w_slice]
-            dst = canvas[c, y0:y1, x0:x1]
-            valid = valid_global & (src > 0)
-            write_mask = valid & (~written_slice)
-            dst[write_mask] = src[write_mask]
+            roi_slice = resized[c, :h_slice, :w_slice]
+            canvas_slice = canvas[c, y0:y1, x0:x1]
+            mask_slice = mask[:h_slice, :w_slice]
 
-        written[y0:y1, x0:x1][write_mask] = True
+            valid_pixels = mask_slice & (roi_slice > 0)
+            canvas_slice[valid_pixels] = roi_slice[valid_pixels]
         
     # ---------------- Save ----------------
     if dtype == "uint16":
