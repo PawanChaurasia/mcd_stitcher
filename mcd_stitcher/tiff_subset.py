@@ -23,6 +23,12 @@ from xml.dom import minidom
 
 def main(output_type, compression, list_channels, filter, pyramid, input_path):
     start_all = time.time()
+    
+    if list_channels and (filter or pyramid):
+        raise click.ClickException("-l cannot be combined with -f or -p")
+
+    if not list_channels and not filter and not pyramid:
+        raise click.ClickException("No action specified. Use -l, -f, or -p.")
 
     if input_path.is_file() and input_path.suffix.lower() == ".tiff":
         tiff_files = [input_path]
@@ -32,19 +38,17 @@ def main(output_type, compression, list_channels, filter, pyramid, input_path):
         tiff_files = list(input_path.rglob("*.tiff"))
         if not tiff_files:
             raise click.ClickException("No .tiff files found in folder")
-        print(f"Found {len({f.parent for f in tiff_files})} folders")
         input_root = input_path
+        print(f"Found {len({f.parent for f in tiff_files})} folders")
 
     else:
         raise click.ClickException("Input must be a .tiff file or a folder of .tiff files")
-        
-    if not (list_channels or filter or pyramid):
-        raise click.ClickException("No action specified.")
 
     if list_channels:
         if len(tiff_files) != 1:
             raise click.ClickException("--list-channels requires a single .tiff file")
         list_channels_fn(tiff_files[0])
+        return
     
     current_folder = None
     folder_start = None
