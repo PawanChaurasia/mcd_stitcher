@@ -1,16 +1,16 @@
-import logging
+from importlib.metadata import version, PackageNotFoundError
 
-from .mcd_convert import main
-from .mcd_stitch import main
-from .tiff_subset import main
+try:
+    __version__ = version("mcd_stitcher")
+except PackageNotFoundError:
+    __version__ = "2.2.0"
 
-__version__ = "2.0.0"
-
-logger = logging.getLogger(__name__)
+from .mcd_stitch import mcd_stitch
+from .mcd_convert import main as mcd_convert
+from .tiff_subset import main as tiff_subset
 
 __all__ = [
-    "mcd_convert",
     "mcd_stitch",
+    "mcd_convert",
     "tiff_subset",
-    "__version__",
 ]
