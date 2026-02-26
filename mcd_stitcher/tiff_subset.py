@@ -10,7 +10,7 @@ import xml.etree.ElementTree as ET
 from datetime import datetime
 from pathlib import Path
 from typing import List, Optional
-from xml.dom import minidom
+from .mcd_utils import CREATOR
 
 # ---------------------- CLI ----------------------
 @click.command(name='tiff_subset')
@@ -130,7 +130,7 @@ def build_ome_xml(
 
     ome = ET.Element('OME', {
         'xmlns': 'http://www.openmicroscopy.org/Schemas/OME/2016-06',
-        'Creator': 'Pawan Chaurasia, MCD_Stitcher v2.1.0'
+        'Creator': CREATOR
     })
 
     img = ET.SubElement(ome, 'Image', {'ID': 'Image:0', 'Name': tiff_name})
@@ -155,7 +155,8 @@ def build_ome_xml(
         td = ET.SubElement(pixels, 'TiffData', {'FirstC': str(i), 'FirstZ': '0', 'FirstT': '0', 'IFD': str(i), 'PlaneCount': '1' })
         ET.SubElement(td, 'UUID', {'FileName': tiff_name}).text = f'urn:uuid:{uuid.uuid4()}'
 
-    return minidom.parseString(ET.tostring(ome)).toprettyxml(indent='  ')
+    ET.indent(ome, space='  ')
+    return ET.tostring(ome, encoding='unicode', xml_declaration=True)
 
 def create_pyramid(image: np.ndarray, levels: int = 4) -> List[np.ndarray]:
     pyramid = [image]
