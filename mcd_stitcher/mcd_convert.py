@@ -9,11 +9,11 @@ import xml.etree.ElementTree as ET
 from pathlib import Path
 from readimc import MCDFile
 from typing import Optional
-from xml.dom import minidom
+from .mcd_utils import make_dir, read_acquisition_chunked, CREATOR
 
 # ---------------------- CLI ----------------------
 @click.command(name='mcd_convert')
-@click.option('-d','--output_type',type=click.Choice(['uint16','float32'],case_sensitive=False),default='uint16',show_default=True,help='Output data type for TIFF')
+@click.option('-d','--output_type',type=click.Choice(['uint16','float32'],case_sensitive=True),default='uint16',show_default=True,help='Output data type for TIFF')
 @click.option('-c','--compression',type=click.Choice(['None', 'LZW', 'zstd'], case_sensitive=True),default='zstd',show_default=True,help='Compression for output TIFF')
 @click.argument('input_path', type=click.Path(exists=True, path_type=Path))
 @click.argument('output_path', type=click.Path(exists=False, path_type=Path), required=False)
@@ -36,7 +36,6 @@ def main(output_type, compression, input_path, output_path):
     for mcd in mcd_files:
         start_mcd = time.time()
         out_dir = make_out_dir(mcd, output_path)
-        make_dir(out_dir)
         print(f"Processing MCD: {mcd}")
         mcd_convert(mcd, out_dir, output_type, compression)
         print(f"Successfully processed {mcd.name} in {time.time() - start_mcd:.1f}s")
@@ -44,19 +43,16 @@ def main(output_type, compression, input_path, output_path):
     print(f"Finished all MCDs in {time.time() - start_all:.1f}s")
 
 # ---------------------- Helpers ----------------------
-def make_dir(path: Path):
-    path.mkdir(parents=True, exist_ok=True)
-
 def make_out_dir(input_path: Path, base_out: Optional[Path]) -> Path:
     base = base_out if base_out else input_path.parent
     return base / "TIFF_Converted" / input_path.stem
-    
+
 def build_ome_xml(acqs, tiff_name, dtype):
     ome = ET.Element('OME', {
         'xmlns': 'http://www.openmicroscopy.org/Schemas/OME/2016-06',
-        'Creator': 'Pawan Chaurasia, MCD_Stitcher v2.1.0'
+        'Creator': CREATOR
     })
-    
+
     ome_pixel_type = {'uint16': 'uint16', 'float32': 'float'}[dtype]
     ET.SubElement(ome, 'Instrument', {'ID': 'Instrument:StandardBioToolsInstrument'})
 
@@ -80,42 +76,47 @@ def build_ome_xml(acqs, tiff_name, dtype):
 
         for i in range(acq.num_channels):
             ET.SubElement(pixels, 'Channel', {'ID': f'Channel:{acq.id}:{i}', 'Name': acq.channel_labels[i], 'SamplesPerPixel': '1'})
-        
+
         for i in range(acq.num_channels):
             td = ET.SubElement(pixels, 'TiffData', {'FirstC': str(i),'FirstT':'0', 'FirstZ':'0', 'IFD': str(i), 'PlaneCount':'1'})
             ET.SubElement(td, 'UUID', {'FileName': tiff_name}).text = f'urn:uuid:{uuid.uuid4()}'
 
-    return minidom.parseString(ET.tostring(ome)).toprettyxml(indent='  ')
+    ET.indent(ome, space='  ')
+    return ET.tostring(ome, encoding='unicode', xml_declaration=True)
 
 # ---------------------- Core Function ----------------------
-def mcd_convert(mcd_path, out_dir, dtype, compression):
+def mcd_convert(
+    mcd_path: Path,
+    out_dir: Path,
+    dtype: str = "uint16",
+    compression: str = "zstd"
+    ):
+
     # ---------------- Read MCD ----------------
     with MCDFile(mcd_path) as mcd:
         make_dir(out_dir)
-        for slide in mcd.slides:            
+        for slide in mcd.slides:
             for acq in slide.acquisitions:
-                acq_dir = out_dir            
                 name = acq.description
-                tiff_path = acq_dir / f"{name}.ome.tiff"                
+                tiff_path = out_dir / f"{name}.ome.tiff"
 
                 try:
-                    img = mcd.read_acquisition(acq, strict=True)
+                    img = read_acquisition_chunked(mcd._fh, acq, strict=True)
                 except OSError:
                     print(f"Warning: strict read failed for {acq.description}. Retrying in recovery mode.")
-                    img = mcd.read_acquisition(acq, strict=False)
-                
+                    img = read_acquisition_chunked(mcd._fh, acq, strict=False)
+
                 # ---------------- Save ----------------
-                if dtype == 'uint16':
-                    img = np.clip(img, 0, 65535).astype(np.uint16)
-                else:
-                    img = img.astype(np.float32)
-                
                 ome_xml = build_ome_xml([acq], tiff_path.name, dtype)
 
                 with tiff.TiffWriter(tiff_path, bigtiff=True) as writer:
                     for i in range(img.shape[0]):
+                        if dtype == 'uint16':
+                            plane = np.clip(img[i], 0, 65535).astype(np.uint16)
+                        else:
+                            plane = img[i]
                         writer.write(
-                            img[i],
+                            plane,
                             tile=(256, 256),
                             compression=compression,
                             photometric="minisblack",
