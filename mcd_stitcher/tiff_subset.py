@@ -79,40 +79,30 @@ def main(output_type, compression, list_channels, filter, pyramid, input_path):
     print(f"Finished all folders in {round(time.time() - start_all, 1)}s")
 
 # ---------------------- Helpers ----------------------
-def read_ome_tiff(tiff_path: Path):
+def read_ome_metadata_only(tiff_path: Path):
+    """Read OME metadata without loading image data."""
     with tiff.TiffFile(tiff_path) as tif:
         ome_xml = tif.ome_metadata
         if ome_xml is None:
             raise ValueError("No OME-XML metadata found")
-
         root = ET.fromstring(ome_xml)
         ns = {"ome": "http://www.openmicroscopy.org/Schemas/OME/2016-06"}
+        channels = [c.get("Name") for c in root.findall(".//ome:Channel", ns)]
+        pixels = root.find(".//ome:Pixels", ns)
+        return (channels,
+                float(pixels.get("PhysicalSizeX", "1.0")),
+                float(pixels.get("PhysicalSizeY", "1.0")),
+                int(pixels.get("SizeX", "0")),
+                int(pixels.get("SizeY", "0")))
 
-        channels = root.findall(".//ome:Channel", ns)
-        channel_names = [c.get("Name") for c in channels]
-        size_c = len(channel_names)
-
-        pixels_elem = root.find(".//ome:Pixels", ns)
-        phys_x = float(pixels_elem.get("PhysicalSizeX", "1.0"))
-        phys_y = float(pixels_elem.get("PhysicalSizeY", "1.0"))
-
-        if len(tif.series) == size_c:
-            image_data = np.stack([s.asarray() for s in tif.series], axis=0)
-        else:
-            series = tif.series[0]
-            level0 = series.levels[0]
-
-            if len(level0.pages) < size_c:
-                raise ValueError(f"Found {len(level0.pages)} planes, expected {size_c}")
-
-            image_data = np.stack([level0.pages[i].asarray() for i in range(size_c)], axis=0)
-
-    if image_data.shape[0] != size_c:
-        raise ValueError(
-            f"Channel mismatch: image has {image_data.shape[0]}, "
-            f"OME XML lists {size_c}")
-
-    return image_data, channel_names, phys_x, phys_y
+def read_channel_lazy(tiff_path: Path, channel_idx: int) -> np.ndarray:
+    """Read a single channel without loading others into memory."""
+    with tiff.TiffFile(tiff_path) as tif:
+        if not tif.series:
+            raise ValueError("Could not read TIFF data")
+        if len(tif.series) == 1:
+            return tif.series[0].levels[0].pages[channel_idx].asarray()
+        return tif.series[channel_idx].asarray()
 
 def build_ome_xml(
     image_data: np.ndarray,
@@ -166,65 +156,76 @@ def create_pyramid(image: np.ndarray, levels: int = 4) -> List[np.ndarray]:
         pyramid.append(downsampled)
     return pyramid
 
-def write_pyramidal_ome_tiff(
-    image_data: np.ndarray,
-    channel_names: List[str],
+def write_ome_tiff_streaming(
+    input_path: Path,
     output_path: Path,
+    channel_indices: Optional[List[int]],
     compression: str,
     output_type: str,
-    phys_x: float = 1.0,
-    phys_y: float = 1.0,
-    levels: int = 4,
 ):
-    if output_type == "uint16":
-        image_data = image_data.astype(np.uint16)
-    else:
-        image_data = image_data.astype(np.float32)
-
-    pyramid_levels = create_pyramid(image_data, levels=levels)
-    ome_xml = build_ome_xml(image_data, channel_names, output_path.name, physical_x=phys_x, physical_y=phys_y)
-
-    with tiff.TiffWriter(output_path, bigtiff=True) as tif:
-        options = dict(
-            tile=(256, 256),
-            compression=compression,
-            photometric="minisblack",
-            metadata={"axes": "CYX"},
-        )
-
-        for i, level_data in enumerate(pyramid_levels):
-            if i == 0:
-                tif.write(level_data, subifds=levels - 1, description=ome_xml, **options)
-            else:
-                tif.write(level_data, subfiletype=1, **options)
-
-def write_ome_tiff(
-    image_data: np.ndarray,
-    channel_names: List[str],
-    output_path: Path,
-    compression: str,
-    output_type: str,
-    phys_x: float = 1.0,
-    phys_y: float = 1.0,
-):
-    if output_type == "uint16":
-        image_data = image_data.astype(np.uint16)
-    else:
-        image_data = image_data.astype(np.float32)
-
-    ome_xml = build_ome_xml(image_data, channel_names, output_path.name, physical_x=phys_x, physical_y=phys_y)
-
+    """Write OME TIFF channel-by-channel without loading full image."""
+    channel_names, phys_x, phys_y, size_x, size_y = read_ome_metadata_only(input_path)
+    channel_indices = channel_indices or list(range(len(channel_names)))
+    selected_names = [channel_names[i] for i in channel_indices]
+    
+    ome_xml = build_ome_xml(
+        np.zeros((len(selected_names), size_y, size_x), dtype=np.float32),
+        selected_names,
+        output_path.name,
+        physical_x=phys_x,
+        physical_y=phys_y
+    )
+    
     with tiff.TiffWriter(output_path, bigtiff=True) as writer:
-        for i in range(image_data.shape[0]):
+        for out_idx, ch_idx in enumerate(channel_indices):
+            plane = read_channel_lazy(input_path, ch_idx)
+            if output_type == "uint16":
+                plane = np.clip(plane, 0, 65535).astype(np.uint16)
+            else:
+                plane = plane.astype(np.float32)
+            
             writer.write(
-                image_data[i],
+                plane,
                 tile=(256, 256),
                 compression=compression,
                 photometric="minisblack",
-                description=ome_xml if i == 0 else None,
+                description=ome_xml if out_idx == 0 else None,
             )
+            del plane
+
+def write_pyramidal_ome_tiff_streaming(
+    input_path: Path,
+    output_path: Path,
+    channel_indices: Optional[List[int]],
+    compression: str,
+    output_type: str,
+    levels: int = 4,
+):
+    """Write pyramidal OME TIFF from selected channels."""
+    channel_names, phys_x, phys_y, size_x, size_y = read_ome_metadata_only(input_path)
+    channel_indices = channel_indices or list(range(len(channel_names)))
+    selected_names = [channel_names[i] for i in channel_indices]
+    
+    img = np.zeros((len(selected_names), size_y, size_x), dtype=np.float32)
+    for out_idx, ch_idx in enumerate(channel_indices):
+        img[out_idx] = read_channel_lazy(input_path, ch_idx)
+    
+    if output_type == "uint16":
+        img = img.astype(np.uint16)
+    else:
+        img = img.astype(np.float32)
+    
+    pyramid = create_pyramid(img, levels)
+    ome_xml = build_ome_xml(img, selected_names, output_path.name, physical_x=phys_x, physical_y=phys_y)
+    
+    with tiff.TiffWriter(output_path, bigtiff=True) as tif:
+        opts = dict(tile=(256, 256), compression=compression, photometric="minisblack", metadata={"axes": "CYX"})
+        for i, level in enumerate(pyramid):
+            tif.write(level, subifds=levels - 1 if i == 0 else None, subfiletype=1 if i > 0 else None,
+                      description=ome_xml if i == 0 else None, **opts)
 
 def parse_channels(filter_str: str) -> List[int]:
+    """Parse channel filter string like '0-5,7,10' into list of indices."""
     channels = set()
     for part in filter_str.split(","):
         if "-" in part:
@@ -236,9 +237,10 @@ def parse_channels(filter_str: str) -> List[int]:
 
 # ---------------------- Core Function ----------------------
 def list_channels_fn(tiff_path: Path):
-    _, channel_names, _, _ = read_ome_tiff(tiff_path)
+    """List channels without loading image data."""
+    channels, *_ = read_ome_metadata_only(tiff_path)
     click.echo(f"Channels in {tiff_path}:")
-    for i, name in enumerate(channel_names):
+    for i, name in enumerate(channels):
         click.echo(f"  {i}: {name}")
         
 def subset_single_file(
@@ -249,39 +251,31 @@ def subset_single_file(
     output_type: str,
     pyramid: bool = False, 
 ):
-    image_data, channel_names, phys_x, phys_y = read_ome_tiff(tiff_path)
-
+    """Process TIFF with streaming to minimize memory usage."""
+    channel_names, _, _, _, _ = read_ome_metadata_only(tiff_path)
+    
     if filter_str:
         selected = parse_channels(filter_str)
         selected = [i for i in selected if 0 <= i < len(channel_names)]
-
         if not selected:
             raise ValueError("No valid channels selected")
-
-        subset_img = image_data[selected]
-        subset_names = [channel_names[i] for i in selected]
+        channel_indices = selected
         filtered = True
     else:
-        subset_img = image_data
-        subset_names = channel_names
+        channel_indices = None
         filtered = False
-
+    
     out_dir.mkdir(parents=True, exist_ok=True)
-
+    
     base = tiff_path.stem.replace(".ome", "")
-    suffixes = []
-    if filtered:
-        suffixes.append("filtered")
-    if pyramid:
-        suffixes.append("pyramid")
-
+    suffixes = [s for s in (["filtered"] if filtered else []) + (["pyramid"] if pyramid else [])]
     suffix_str = "_" + "_".join(suffixes) if suffixes else ""
     output_path = out_dir / f"{base}{suffix_str}.ome.tiff"
-
+    
     if pyramid:
-        write_pyramidal_ome_tiff(subset_img, subset_names, output_path, compression, output_type, phys_x, phys_y)
+        write_pyramidal_ome_tiff_streaming(tiff_path, output_path, channel_indices, compression, output_type)
     else:
-        write_ome_tiff(subset_img, subset_names, output_path, compression, output_type, phys_x, phys_y)
+        write_ome_tiff_streaming(tiff_path, output_path, channel_indices, compression, output_type)
 
 if __name__ == "__main__":
     main()
