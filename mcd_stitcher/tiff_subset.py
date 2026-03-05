@@ -20,9 +20,11 @@ from .mcd_utils import CREATOR
 @click.option('-f','--filter',type=str,nargs=1,required=False,help="Subset channels (e.g. '0-5,7,10')")
 @click.option('-p','--pyramid',is_flag=True, help='Create a pyramidal (tiled) TIFF as output')
 @click.argument('input_path', type=click.Path(exists=True, path_type=Path))
+@click.argument('output_path', type=click.Path(exists=False, path_type=Path), required=False)
 
-def main(output_type, compression, list_channels, filter, pyramid, input_path):
+def main(output_type, compression, list_channels, filter, pyramid, input_path, output_path):
     start_all = time.time()
+    is_single_file = input_path.is_file()
     
     if list_channels and (filter or pyramid):
         raise click.ClickException("-l cannot be combined with -f or -p")
@@ -49,34 +51,39 @@ def main(output_type, compression, list_channels, filter, pyramid, input_path):
             raise click.ClickException("--list-channels requires a single .tiff file")
         list_channels_fn(tiff_files[0])
         return
-    
-    current_folder = None
-    folder_start = None
+
+    output_root = output_path if output_path else input_root
+    current_group = None
+    group_start = None
 
     for tiff_path in tiff_files:
-        folder = tiff_path.parent
-        if folder != current_folder:
-            if current_folder is not None:
-                elapsed = time.time() - folder_start
-                print(f"Successfully processed folder {current_folder.name} in {elapsed:.1f}s")
-            current_folder = folder
-            folder_start = time.time()
-            print(f"Processing folder: {current_folder.name}")
+        group = tiff_path if is_single_file else tiff_path.parent
+        group_name = tiff_path.name if is_single_file else tiff_path.parent.name
+        group_label = "file" if is_single_file else "folder"
+
+        if group != current_group:
+            if current_group is not None:
+                elapsed = time.time() - group_start
+                print(f"Successfully processed {group_label} {current_name} in {elapsed:.1f}s")
+            current_group = group
+            current_name = group_name
+            group_start = time.time()
+            print(f"Processing {group_label}: {current_name}")
+
         try:
             relative = tiff_path.relative_to(input_root)
-            target_dir = input_root / relative.parent
+            target_dir = output_root / relative.parent
             subset_single_file(tiff_path, target_dir, filter, compression, output_type, pyramid=pyramid)
-
         except Exception as e:
             log_path = input_root / "ome_subset_errors.log"
             with open(log_path, "a") as f:
                 f.write(f"{datetime.now()} - {tiff_path}\n{e}\n{traceback.format_exc()}")
-                
-    if current_folder is not None:
-        elapsed = time.time() - folder_start
-        print(f"Successfully processed folder {current_folder.name} in {elapsed:.1f}s")
+
+    if current_group is not None:
+        elapsed = time.time() - group_start
+        print(f"Successfully processed {group_label} {current_name} in {elapsed:.1f}s")
         
-    print(f"Finished all folders in {round(time.time() - start_all, 1)}s")
+    print(f"Finished in {round(time.time() - start_all, 1)}s")
 
 # ---------------------- Helpers ----------------------
 def read_ome_metadata_only(tiff_path: Path):
@@ -167,9 +174,10 @@ def write_ome_tiff_streaming(
     channel_names, phys_x, phys_y, size_x, size_y = read_ome_metadata_only(input_path)
     channel_indices = channel_indices or list(range(len(channel_names)))
     selected_names = [channel_names[i] for i in channel_indices]
+    metadata_dtype = np.uint16 if output_type == "uint16" else np.float32
     
     ome_xml = build_ome_xml(
-        np.zeros((len(selected_names), size_y, size_x), dtype=np.float32),
+        np.zeros((len(selected_names), size_y, size_x), dtype=metadata_dtype),
         selected_names,
         output_path.name,
         physical_x=phys_x,
@@ -211,7 +219,7 @@ def write_pyramidal_ome_tiff_streaming(
         img[out_idx] = read_channel_lazy(input_path, ch_idx)
     
     if output_type == "uint16":
-        img = img.astype(np.uint16)
+        img = np.clip(img, 0, 65535).astype(np.uint16)
     else:
         img = img.astype(np.float32)
     
