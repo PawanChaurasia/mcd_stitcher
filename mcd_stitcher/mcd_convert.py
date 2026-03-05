@@ -45,7 +45,7 @@ def main(output_type, compression, input_path, output_path):
 # ---------------------- Helpers ----------------------
 def make_out_dir(input_path: Path, base_out: Optional[Path]) -> Path:
     base = base_out if base_out else input_path.parent
-    return base / "TIFF_Converted" / input_path.stem
+    return base / "MCD_Converted" / input_path.stem
 
 def build_ome_xml(acqs, tiff_name, dtype):
     ome = ET.Element('OME', {
