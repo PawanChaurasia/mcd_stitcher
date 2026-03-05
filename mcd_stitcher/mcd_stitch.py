@@ -56,7 +56,7 @@ def main(output_type, compression, roi, input_path, output_path):
 # ---------------------- Helpers ----------------------
 def make_out_dir(input_path: Path, base_out: Optional[Path]) -> Path:
     base = base_out if base_out else input_path.parent
-    return base / "TIFF_Stitched"
+    return base / "MCD_Stitched"
 
 def build_ome_xml(shape, channels, px, tiff_name, ome_dtype):
     C, H, W = shape
