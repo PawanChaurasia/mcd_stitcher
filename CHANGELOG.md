@@ -22,9 +22,6 @@
 - Legacy XML formatting path based on `xml.dom.minidom`.
 - Redundant float copy paths in processing pipeline.
 
-### Release Notes
-- User-facing summary: `release.md`
-
 ### Compare
 - Full diff: https://github.com/PawanChaurasia/mcd_stitcher/compare/v2.1.1.post1...v2.2.0
 
