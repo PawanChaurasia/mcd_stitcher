@@ -19,14 +19,14 @@ classifiers = [
 keywords = ["imaging", "masscytometry", "StandardBio", "SBT", "IMC", "stitching", "conversion"]
 
 dependencies = [
-    "click",
-	"imagecodecs",
-	"numpy",
-    "pandas",
-    "python-dateutil",
-	"readimc",
-    "scikit-image",
-    "tifffile"
+    "click>=8.1,<9",
+    "imagecodecs>=2024.12,<2027",
+    "numpy>=2.0,<3",
+    "pandas>=2.3,<4",
+    "python-dateutil>=2.8,<3",
+    "readimc>=0.9,<1",
+    "scikit-image>=0.24,<1",
+    "tifffile>=2024.8,<2027"
 ]
 
 [project.urls]
