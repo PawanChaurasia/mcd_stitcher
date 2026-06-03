@@ -1,5 +1,42 @@
 # Changelog
 
+## Version 2.3.0 (2026-06-03)
+
+Adds `mcd_process`, a single command that opens each `.mcd` once and runs any mix of conversion, stitching, panorama export, ROI mapping, and metadata in one pass — with optional channel-subset and pyramid post-processing. Also unifies the OME-TIFF write path and pins dependency versions.
+
+### Breaking Changes
+- `mcd_stitch -r` / `--roi` is now a value option instead of an interactive prompt. Use `-r "0,3,5"` or `-r "0-5"`; omit `-r` (or pass `-r "all"`) for every ROI.
+
+### Enhancements
+- Added `mcd_process` — a unified command that opens each `.mcd` file once and runs any combination of `--convert`, `--stitch`, `-p`, `-m`, and `--roi_map` in a single pass.
+- Added `-p` / `--panorama`: export every panorama as a PNG, with ROI outlines drawn on sufficiently large panoramas.
+- Added `--roi_map`: write per-ROI TXT maps of slide and panorama-pixel coordinates.
+- Added `-m` / `--metadata`: print an ROI / channel / panorama summary without writing images.
+- Added `-f` / `--filter` and `--pyramid` post-processing to `mcd_process`: after `--convert` / `--stitch`, optionally subset channels and/or write pyramidal copies alongside the originals (`_filtered` / `_pyramid` / `_filtered_pyramid`). Both require `--convert` or `--stitch`.
+- Stitched OME-TIFFs are now written as 256x256 tiles (matching the per-ROI converts) for smoother panning and zooming in QuPath / Napari. Pixel data is unchanged.
+- `mcd_process` reports live per-step progress with timings, e.g. `Converting 12 ROI(s)... done (0.7s)`, for panorama export, convert, stitch, and post-processing.
+- Renamed `mcd_utils.py` → `helper_utils.py` and consolidated all shared helpers into it.
+
+### Bug Fixes
+- `mcd_convert` and `mcd_stitch` now reject folder and non-`.mcd` input with a clean usage error instead of a traceback. Folder batching stays exclusive to `mcd_process`.
+- `read_acquisition_chunked` derives the buffer dtype from `ValueBytes` (2 → float16, 4 → float32, 8 → float64) instead of hardcoding `float32`; unexpected values now fail fast.
+- Panorama overlay labels render at the intended size on Linux / macOS — the overlay falls back through DejaVuSans / Liberation before a tiny default, instead of only looking for Windows `arial.ttf`.
+- Post-processed OME-TIFFs (`_filtered` / `_pyramid`) now include the `<Instrument>` element, matching `mcd_convert` / `mcd_stitch` output. Pixel data is unchanged.
+- Fixed `uint16` stitched output where high-intensity or resampled pixels could wrap into bright artifacts.
+
+### Performance
+- Multi-operation runs open each `.mcd` once instead of per operation (convert + stitch: 2 opens → 1; convert + panorama + stitch: 3 → 1).
+
+### Internal
+- Unified the OME-TIFF write path behind a single `ome_xml_builder()` and a shared `write_planes()` writer used by `mcd_convert`, `mcd_stitch`, and the subset path. Output verified pixel-identical against real data.
+- Consolidated the range-string parsers into `helper_utils.parse_index_string()` (`parse_channels` is now a thin sorted wrapper over it).
+
+### Dependencies
+- Updated and pinned all dependency version ranges in `pyproject.toml` for more reproducible installs.
+
+### Compare
+- Full diff: https://github.com/PawanChaurasia/mcd_stitcher/compare/v2.2.0...v2.3.0
+
 ## Version 2.2.0 (2026-03-05)
 
 ### Enhancements
