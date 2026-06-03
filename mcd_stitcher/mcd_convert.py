@@ -1,127 +1,126 @@
 # ---------------------- Imports ----------------------
 import click
-import numpy as np
-import time
-import tifffile as tiff
-import uuid
-import xml.etree.ElementTree as ET
 
 from pathlib import Path
 from readimc import MCDFile
-from typing import Optional
-from .mcd_utils import make_dir, read_acquisition_chunked, CREATOR
+from typing import List, Optional
+
+from .helper_utils import ome_xml_builder, make_dir, read_acquisition_chunked, load_rois, validate_mcd_file, write_planes
+
+
+# ---------------------- Python API ----------------------
+
+def mcd_convert(
+    input_path: Path,
+    output_path: Optional[Path] = None,
+    dtype: str = "uint16",
+    compression: str = "zstd",
+    out_dir: Optional[Path] = None,
+    silent: bool = False,
+    mcd: Optional[MCDFile] = None,
+    rois: Optional[List[dict]] = None,
+) -> int:
+    """Per-ROI conversion from MCD to OME-TIFF.
+
+    Args:
+        input_path: Path to a single .mcd file.
+        output_path: Optional base output directory (used for standalone CLI).
+        dtype: "uint16" or "float32".
+        compression: "zstd" | "LZW" | "None".
+        out_dir: Explicit output directory (used when called from mcd_process).
+        silent: Suppress status prints (used when called from mcd_process).
+        mcd: Pre-opened MCDFile (used when called from mcd_process).
+        rois: Pre-loaded ROI list (used when called from mcd_process).
+
+    Returns:
+        Number of ROIs converted (0 if the MCD has no ROIs).
+    """
+    close_mcd = False
+    if mcd is None:
+        mcd = MCDFile(input_path)
+        mcd.__enter__()
+        close_mcd = True
+
+    if rois is None:
+        try:
+            rois = load_rois(mcd)
+        except Exception:
+            if close_mcd:
+                mcd.__exit__(None, None, None)
+            raise
+
+    if not rois:
+        if close_mcd:
+            mcd.__exit__(None, None, None)
+        if not silent:
+            print(f"  SKIPPED: No ROIs found in {input_path}")
+        return 0
+
+    stem = input_path.stem
+    if not out_dir and output_path:
+        out_dir = output_path / stem
+    elif not out_dir:
+        out_dir = input_path.parent / "MCD_Converted" / stem
+
+    for roi_meta in rois:
+        acq = roi_meta["acq"]
+        name = acq.description
+        tiff_path = out_dir / f"{name}.ome.tiff"
+
+        try:
+            img = read_acquisition_chunked(mcd._fh, acq, strict=True)
+        except OSError:
+            if not silent:
+                print(f"  Warning: strict read failed for {acq.description}. Retrying in recovery mode.")
+            img = read_acquisition_chunked(mcd._fh, acq, strict=False)
+
+        ome_xml = ome_xml_builder(
+            channel_names=acq.channel_labels,
+            size_x=acq.width_px,
+            size_y=acq.height_px,
+            pixel_type={"uint16": "uint16", "float32": "float"}[dtype],
+            tiff_name=tiff_path.name,
+            image_id=f"Image:{acq.id}",
+            image_name=acq.description,
+            pixels_id=f"Pixels:{acq.id}",
+            channel_id_prefix=f"Channel:{acq.id}:",
+            physical_x=float(acq.metadata.get("AblationDistanceBetweenShotsX", 1.0)),
+            physical_y=float(acq.metadata.get("AblationDistanceBetweenShotsY", 1.0)),
+        )
+
+        make_dir(out_dir)
+
+        write_planes(
+            tiff_path, ome_xml,
+            (img[i] for i in range(img.shape[0])),
+            compression, dtype, tile=(256, 256),
+        )
+        del img
+
+    if close_mcd:
+        mcd.__exit__(None, None, None)
+    if not silent:
+        print(f"  Processed {input_path.name}: {len(rois)} ROI(s) converted")
+
+    return len(rois)
+
 
 # ---------------------- CLI ----------------------
+
 @click.command(name='mcd_convert')
-@click.option('-d','--output_type',type=click.Choice(['uint16','float32'],case_sensitive=True),default='uint16',show_default=True,help='Output data type for TIFF')
-@click.option('-c','--compression',type=click.Choice(['None', 'LZW', 'zstd'], case_sensitive=True),default='zstd',show_default=True,help='Compression for output TIFF')
-@click.argument('input_path', type=click.Path(exists=True, path_type=Path))
+@click.option('-d', '--output_type', type=click.Choice(['uint16', 'float32'], case_sensitive=True), default='uint16', metavar='TYPE', help="Output type (uint16 / float32).")
+@click.option('-c', '--compression', type=click.Choice(['None', 'LZW', 'zstd'], case_sensitive=True), default='zstd', metavar='TYPE', help="Compression mode (none / LZW / zstd).")
+@click.argument('input_path', type=click.Path(exists=True, dir_okay=False, path_type=Path), callback=validate_mcd_file)
 @click.argument('output_path', type=click.Path(exists=False, path_type=Path), required=False)
 
 def main(output_type, compression, input_path, output_path):
-    start_all = time.time()
+    mcd_convert(
+        input_path=input_path,
+        output_path=output_path,
+        dtype=output_type,
+        compression=compression,
+    )
 
-    if input_path.is_file() and input_path.suffix.lower() == '.mcd':
-        mcd_files = [input_path]
-
-    elif input_path.is_dir():
-        mcd_files = list(input_path.glob('*.mcd'))
-        if not mcd_files:
-            raise click.ClickException("No .mcd files found in folder")
-        print(f"Found {len(mcd_files)} MCD files")
-
-    else:
-        raise click.ClickException("Input must be an .mcd file or a folder of .mcd files")
-
-    for mcd in mcd_files:
-        start_mcd = time.time()
-        out_dir = make_out_dir(mcd, output_path)
-        print(f"Processing MCD: {mcd}")
-        mcd_convert(mcd, out_dir, output_type, compression)
-        print(f"Successfully processed {mcd.name} in {time.time() - start_mcd:.1f}s")
-
-    print(f"Finished all MCDs in {time.time() - start_all:.1f}s")
-
-# ---------------------- Helpers ----------------------
-def make_out_dir(input_path: Path, base_out: Optional[Path]) -> Path:
-    base = base_out if base_out else input_path.parent
-    return base / "MCD_Converted" / input_path.stem
-
-def build_ome_xml(acqs, tiff_name, dtype):
-    ome = ET.Element('OME', {
-        'xmlns': 'http://www.openmicroscopy.org/Schemas/OME/2016-06',
-        'Creator': CREATOR
-    })
-
-    ome_pixel_type = {'uint16': 'uint16', 'float32': 'float'}[dtype]
-    ET.SubElement(ome, 'Instrument', {'ID': 'Instrument:StandardBioToolsInstrument'})
-
-    for acq in acqs:
-        img = ET.SubElement(ome, 'Image', {'ID': f'Image:{acq.id}', 'Name': acq.description})
-
-        ET.SubElement(img, 'AcquisitionDate').text = acq.metadata['StartTimeStamp']
-
-        pixels = ET.SubElement(img, 'Pixels', {
-            'ID': f'Pixels:{acq.id}',
-            'DimensionOrder': 'XYZCT',
-            'Type': ome_pixel_type,
-            'SizeX': str(acq.width_px),
-            'SizeY': str(acq.height_px),
-            'SizeZ': '1',
-            'SizeC': str(acq.num_channels),
-            'SizeT': '1',
-            'PhysicalSizeX': f'{float(acq.metadata.get("AblationDistanceBetweenShotsX", 1.0))}',
-            'PhysicalSizeY': f'{float(acq.metadata.get("AblationDistanceBetweenShotsY", 1.0))}'
-        })
-
-        for i in range(acq.num_channels):
-            ET.SubElement(pixels, 'Channel', {'ID': f'Channel:{acq.id}:{i}', 'Name': acq.channel_labels[i], 'SamplesPerPixel': '1'})
-
-        for i in range(acq.num_channels):
-            td = ET.SubElement(pixels, 'TiffData', {'FirstC': str(i),'FirstT':'0', 'FirstZ':'0', 'IFD': str(i), 'PlaneCount':'1'})
-            ET.SubElement(td, 'UUID', {'FileName': tiff_name}).text = f'urn:uuid:{uuid.uuid4()}'
-
-    ET.indent(ome, space='  ')
-    return ET.tostring(ome, encoding='unicode', xml_declaration=True)
-
-# ---------------------- Core Function ----------------------
-def mcd_convert(
-    mcd_path: Path,
-    out_dir: Path,
-    dtype: str = "uint16",
-    compression: str = "zstd"
-    ):
-
-    # ---------------- Read MCD ----------------
-    with MCDFile(mcd_path) as mcd:
-        make_dir(out_dir)
-        for slide in mcd.slides:
-            for acq in slide.acquisitions:
-                name = acq.description
-                tiff_path = out_dir / f"{name}.ome.tiff"
-
-                try:
-                    img = read_acquisition_chunked(mcd._fh, acq, strict=True)
-                except OSError:
-                    print(f"Warning: strict read failed for {acq.description}. Retrying in recovery mode.")
-                    img = read_acquisition_chunked(mcd._fh, acq, strict=False)
-
-                # ---------------- Save ----------------
-                ome_xml = build_ome_xml([acq], tiff_path.name, dtype)
-
-                with tiff.TiffWriter(tiff_path, bigtiff=True) as writer:
-                    for i in range(img.shape[0]):
-                        if dtype == 'uint16':
-                            plane = np.clip(img[i], 0, 65535).astype(np.uint16)
-                        else:
-                            plane = img[i]
-                        writer.write(
-                            plane,
-                            tile=(256, 256),
-                            compression=compression,
-                            photometric="minisblack",
-                            description=ome_xml if i == 0 else None
-                        )
 
 if __name__ == '__main__':
     main()
