@@ -5,129 +5,145 @@
 [![PyPI Downloads](https://img.shields.io/pypi/dm/mcd-stitcher?label=Downloads&color=238636&style=flat-square&v=1)](https://pypistats.org/packages/mcd-stitcher)
 [![License: GPLv3](https://img.shields.io/badge/License-GPLv3-lightgrey?style=flat-square&cache-control=no-cache)](https://github.com/PawanChaurasia/mcd_stitcher/blob/main/LICENSE)
 
-**MCD Stitcher** is a high-performance Python package designed to streamline the processing of Imaging Mass Cytometry (IMC) data. It simplifies the conversion of `.mcd` files into standards-compliant OME-TIFFs, handles ROI stitching, and provides tools for channel subsetting, pyramid generation and OME-TIFF compression.
+**MCD Stitcher** turns raw Imaging Mass Cytometry (IMC) `.mcd` files from Standard BioTools instruments into ordinary image files you can open in **QuPath**, **Napari**, or **ImageJ**.
 
-### Key Features
-- **Convert:** Fast transformation of MCD files to OME-TIFF.
-- **Stitch:** Automatic whole-slide reconstruction from ROIs.
-- **Optimize:** Channel filtering and pyramidal OME-TIFF generation for smooth viewing in QuPath, Napari, and ImageJ.
+It can:
+- **Convert** each region (ROI) in an `.mcd` file into its own OME-TIFF.
+- **Stitch** all regions back together into a single whole-slide OME-TIFF.
+- **Tidy up** OME-TIFFs afterwards — keep only the channels you want, shrink them for fast viewing, or re-compress them.
 
-## Installation
 
-**MCD Stitcher** requires Python **3.9** or higher.
+## 🚀 Quick Start
 
-To install the package, use the following command:
+MCD Stitcher needs **Python 3.9 or newer**. Install it with:
 
 ```
 pip install mcd_stitcher
 ```
 
-## Python API
+The main command is **`mcd_process`**. The basic shape is:
 
-You can run the same workflows from Python.
-
-- `mcd_stitch` CLI -> `mcd_stitcher.mcd_stitch.mcd_stitch`
-- `mcd_convert` CLI -> `mcd_stitcher.mcd_convert.mcd_convert`
-- `tiff_subset` CLI -> `mcd_stitcher.tiff_subset.subset_single_file`
-
-Example:
-
-```python
-from pathlib import Path
-from mcd_stitcher.mcd_stitch import mcd_stitch
-
-mcd_stitch(
-    mcd_path=Path("path/to/file.mcd"),
-    output_path=Path("path/to/output/file_stitched.ome.tiff"),
-    dtype="uint16",
-    compression="zstd",
-)
+```
+mcd_process <input> [output] [options]
 ```
 
-`from mcd_stitcher import __version__` returns the installed package version.
+- **`<input>`** — a single `.mcd` file, **or** a folder containing several `.mcd` files.
+- **`[output]`** — *(optional)* where to put the results. Leave it out and results go next to your input.
+- **`[options]`** — what you want it to do (convert, stitch, export a panorama, …). **Pick at least one.**
 
-## ⚡ CLI Commands
+Some example commands:
 
-### ▶️ MCD_STITCH
+```
+# Convert every region into its own OME-TIFF AND stitch them into one whole-slide OME-TIFF
+mcd_process "path/to/file.mcd" --convert --stitch
 
-**Description:** Converts all ROIs from MCD files into **whole-slide stitched OME-TIFFs**.
+# Just print a summary of what's inside the file (no images written)
+mcd_process "path/to/file.mcd" -m
 
-**Command:** 
+# Export the panorama overview image(s)
+mcd_process "path/to/file.mcd" -p
+```
+
+**Where do my files go?** By default, into a `MCD_Processed/<file name>/` folder right next to your input file (or folder).
+
+## ⚡ Commands
+
+### ▶️ mcd_process — the all-in-one command (recommended)
+
+**What it does:** Opens each `.mcd` file once and runs whatever you ask — convert, stitch, export panoramas, write an ROI map, and/or print metadata — in a single pass.
+
+**Command:**
+```
+mcd_process <input_path> [<output_path>] [OPTIONS]
+```
+
+**Arguments:**
+- **input_path:** A single `.mcd` file **or** a folder containing `.mcd` files.
+- **output_path:** *(Optional)* Output folder. Defaults to a `MCD_Processed/<name>/` folder next to your input.
+
+**Options** *(pick at least one operation)*:
+- **--convert:** Save each region (ROI) as its own OME-TIFF.
+- **--stitch:** Stitch the regions into one whole-slide OME-TIFF.
+- **-p, --panorama:** Export the panorama overview image(s) as PNG. Exports **all** panoramas; large panoramas also get the ROI outlines drawn on top. *(This is an on/off switch — it does not take a number.)*
+- **-m, --metadata:** Print a summary of the file (regions, channels, panoramas) to the screen.
+- **--roi_map IDX:** Write a TXT file mapping regions to panorama pixel coordinates, for the given panorama index (e.g. `--roi_map 0` or `--roi_map 1,3-5`). Requires `--convert` or `--stitch`.
+- **-f, --filter "LIST":** Post-process the produced OME-TIFF(s) to keep only these channels, e.g. `"0-5,7"`. Requires `--convert` or `--stitch`.
+- **--pyramid:** Post-process the produced OME-TIFF(s) into a pyramidal (tiled, multi-resolution) copy for fast viewing. Requires `--convert` or `--stitch`. *(Long-only — `-p` is `--panorama`.)*
+- **-r, --roi "LIST":** Limit processing to specific regions, e.g. `"0-5,7,10"`. Single `.mcd` file only.
+- **-d, --output_type [uint16 | float32]:** Output pixel data type. Default: `uint16`.
+- **-c, --compression [None | LZW | zstd]:** Compression for the output. Default: `zstd`.
+
+**Examples:**
+1. **Convert and stitch in one pass:**
+    ```
+    mcd_process "path/to/file.mcd" --convert --stitch
+    ```
+2. **Export panorama overview image(s):**
+    ```
+    mcd_process "path/to/file.mcd" -p
+    ```
+3. **Print a metadata summary (no files written):**
+    ```
+    mcd_process "path/to/file.mcd" -m
+    ```
+4. **Stitch, and write an ROI map for panorama 1:**
+    ```
+    mcd_process "path/to/file.mcd" --stitch --roi_map 1
+    ```
+5. **Process only regions 0–5 and 7:**
+    ```
+    mcd_process "path/to/file.mcd" --convert -r "0-5,7"
+    ```
+6. **Stitch and also write a pyramidal copy for fast viewing:**
+    ```
+    mcd_process "path/to/file.mcd" --stitch --pyramid
+    ```
+
+## 🔧 Individual tools (advanced)
+
+If you only need one step, these single-purpose commands are also available. `mcd_process` covers what `mcd_stitch` and `mcd_convert` do, and can post-process its output like `tiff_subset` (`--pyramid`, `-f/--filter`). `tiff_subset` is still the tool for working directly on **existing** OME-TIFFs (and for `--list-channels`).
+
+### ▶️ mcd_stitch — stitch regions into a whole slide
 
 ```
 mcd_stitch <input_path> [<output_path>] [OPTIONS]
 ```
+- **input_path:** A single `.mcd` file. (Folders are batched by `mcd_process`.)
+- **output_path:** *(Optional)* Defaults to a `MCD_Stitched/` folder next to your input.
+- **-d, --output_type [uint16 | float32]:** Default `uint16`.
+- **-c, --compression [None | LZW | zstd]:** Default `zstd`.
+- **-r, --roi "LIST":** Stitch only specific regions, e.g. `"0-5,7,10"`. Single file only.
 
-**Arguments:**
-- **input_path:** Path to an MCD file or a folder containing `.mcd` files.
-- **output_path:** (Optional) Output folder for stitched OME-TIFFs. Defaults to: `<input_path>/MCD_stitched`
+```
+mcd_stitch "path/to/file.mcd" "path/to/output_folder" -d float32 -c None
+```
 
-**Options:**
-- **-d, --output_type [uint16 | float32]:**   Output pixel data type.  Default: `uint16`
-- **-c, --compression [None | LZW | zstd]:**  Compression method for the output OME-TIFFs. Default: `zstd`
-- **-r, --roi:** Interactively select which ROIs to stitch.
+### ▶️ mcd_convert — save each region as its own OME-TIFF
 
-**Notes:**
-- `--roi` is supported only when `input_path` is a single `.mcd` file.
+```
+mcd_convert <input_path> [<output_path>] [OPTIONS]
+```
+- **input_path:** A single `.mcd` file. (Folders are batched by `mcd_process`.)
+- **output_path:** *(Optional)* Defaults to a `MCD_Converted/<name>/` folder next to your input.
+- **-d, --output_type [uint16 | float32]:** Default `uint16`.
+- **-c, --compression [None | LZW | zstd]:** Default `zstd`.
 
-**Example:**
-1. **Stitch with default output folder and options**
-    ```
-    mcd_stitch "/path/to/MCD_folder"
-    ```
+```
+mcd_convert "path/to/file.mcd" "path/to/output_folder" -d float32 -c LZW
+```
 
-2. **Stitch with custom output folder and options**
-    ```
-    mcd_stitch "/path/to/MCD_folder" "/path/to/output_folder" -d float32 -c None
-    ```
-
-### ▶️ MCD_CONVERT
-
-**Description:** Converts all ROIs from input MCD files into **individual OME-TIFFs**.
-
-**Command:** 
-```  
-mcd_convert <input_path> [<output_path>] [OPTIONS]  
-```  
-**Arguments:**
-- **input_path:** Path to an MCD file or a folder containing `.mcd` files.
-- **output_path:** (Optional) Output folder for stitched OME-TIFFs. Defaults to: `<input_path>/MCD_Converted`
-
-**Options:**
-- **-d, --output_type [uint16 | float32]:**   Output pixel data type.  Default: `uint16`
-- **-c, --compression [None | LZW | zstd]:**  Compression method for the output OME-TIFFs. Default: `zstd`
-
-**Example:**
-1. **Convert with default output folder and options**
-    ```
-    mcd_convert "/path/to/MCD_folder"
-    ```
-
-2. **Convert with custom output folder and options**
-    ```
-    mcd_convert "/path/to/MCD_folder" "/path/to/output_folder" -d float32 -c LZW
-    ```
-
-### ▶️ TIFF_SUBSET
-
-**Description:**
-Subsets channels from OME-TIFF files, with options to list channels, filter specific channels, and generate pyramidal OME-TIFF outputs.
-
-**Command:** 
+### ▶️ tiff_subset — pick channels / make pyramids from existing OME-TIFFs
 
 ```
 tiff_subset <input_path> [<output_path>] [OPTIONS]
 ```
-**Arguments:**
-- **input_path:** Path to a `.tiff` file **or a directory containing `.tiff` files**.
-- **output_path:** (Optional) Output folder for processed OME-TIFFs. Defaults to: `<input_path>`
-
-**Options:**
-- **-d, --output_type [uint16 | float32]:**   Output pixel data type.  Default: `uint16`
-- **-c, --compression [None | LZW | zstd]:**  Compression method for the output OME-TIFFs. Default: `zstd`
-- **-l, --list-channels:**   List all channels in the input OME-TIFF.
-- **-f, --filter "CHANNELS":**   Subset channels using a range or list  (e.g. `"0-5,7,10"`).
-- **-p, --pyramid:**   Create a pyramidal (tiled) OME-TIFF output.
+- **input_path:** A `.tiff` file **or** a directory of `.tiff` files.
+- **output_path:** *(Optional)* Defaults to alongside the input (same folder as the input file, or the input directory itself).
+- **-d, --output_type [uint16 | float32]:** Default `uint16`.
+- **-c, --compression [None | LZW | zstd]:** Default `zstd`.
+- **-l, --list-channels:** List all channels in the input OME-TIFF.
+- **-f, --filter "CHANNELS":** Keep only these channels, e.g. `"0-5,7,10"`.
+- **-p, --pyramid:** Write a pyramidal (tiled) OME-TIFF for fast viewing.
 
 **Notes:**
 - `--list-channels` cannot be combined with `--filter` or `--pyramid`.
@@ -136,41 +152,48 @@ tiff_subset <input_path> [<output_path>] [OPTIONS]
 - Directory mode scans recursively for `*.tiff` files.
 - Per-file failures are logged to `ome_subset_errors.log` in the input root.
 
-### **Examples:**
-1. **List all channels in an OME-TIFF file:**
+**Examples:**
+1. **List channels:**
     ```
     tiff_subset "path/to/file.ome.tiff" -l
     ```
-
-2. **Subset channels 12 to 46 in an individual OME-TIFF:**
+2. **Keep channels 12–46:**
     ```
     tiff_subset "path/to/file.ome.tiff" -f "12-46"
     ```
-    > **Note:** Other possible combinations: "1,6,20" or "5,6-10,55,60"
-
-3. **Subset channels in all OME-TIFFs in a directory 12 to 46**
+    > Output is named `<name>_filtered.ome.tiff`.
+3. **Subset every OME-TIFF in a folder:**
     ```
     tiff_subset "path/to/directory" -f "12-46"
     ```
-	> **Note:** The output files will have `_filtered.ome.tiff` appended to the original filename.
-
-4. **Subset channels to a custom output directory while preserving folder structure:**
+4. **Subset to a custom output folder (folder structure preserved):**
     ```
     tiff_subset "path/to/directory" "path/to/output_folder" -f "12-46"
     ```
-
-5. **Convert an OME-TIFF file into pyramid OME-TIFF**
+5. **Make a pyramidal OME-TIFF:**
     ```
-    tiff_subset "path/to/file.ome.tiff" -p	
+    tiff_subset "path/to/file.ome.tiff" -p
     ```
-	> **Note:** The output files will have `_pyramid.ome.tiff` appended to the original filename.
-
-6. **Subset channels and generate pyramid OME-TIFF:**
+    > Output is named `<name>_pyramid.ome.tiff`.
+6. **Subset channels and make a pyramid:**
     ```
     tiff_subset "path/to/file.ome.tiff" -p -f "12-46"
     ```
-	> **Note:** The output files will have `_filtered_pyramid.ome.tiff` appended to the original filename.
+    > Output is named `<name>_filtered_pyramid.ome.tiff`.
 
-## Issues
+## 🐍 Python API
+
+```python
+from pathlib import Path
+from mcd_stitcher import mcd_stitch, mcd_convert, mcd_process
+
+mcd_stitch(input_path=Path("path/to/file.mcd"), dtype="uint16")
+mcd_convert(input_path=Path("path/to/file.mcd"), dtype="uint16")
+mcd_process(input_path=Path("path/to/file.mcd"), convert=True, stitch=True, panorama="all")
+```
+
+`from mcd_stitcher import __version__` returns the installed package version.
+
+## 💬 Issues
 
 If you run into issues, have a feature suggestion, or want to share feedback, please open a ticket on the [issue tracker](https://github.com/PawanChaurasia/mcd_stitcher/issues).
