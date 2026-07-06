@@ -144,7 +144,6 @@ def ome_xml_builder(
 
     for i in range(len(channel_names)):
         td = ET.SubElement(pixels, 'TiffData', {'FirstC': str(i), 'FirstZ': '0', 'FirstT': '0', 'IFD': str(i), 'PlaneCount': '1' })
-        ET.SubElement(td, 'UUID', {'FileName': tiff_name}).text = f'urn:uuid:{uuid.uuid4()}'
 
     ET.indent(ome, space='  ')
     return ET.tostring(ome, encoding='unicode', xml_declaration=True)
