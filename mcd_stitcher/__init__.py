@@ -1,9 +1,4 @@
-from importlib.metadata import version, PackageNotFoundError
-
-try:
-    __version__ = version("mcd_stitcher")
-except PackageNotFoundError:
-    __version__ = "2.3.0"
+from ._version import __version__
 
 from .mcd_stitch import mcd_stitch
 from .mcd_convert import mcd_convert
