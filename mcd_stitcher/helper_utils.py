@@ -67,7 +67,7 @@ def load_rois(mcd: MCDFile) -> List[dict]:
     )
     return roi_metadata
 
-def read_acquisition_chunked(fh, acq, strict=True, chunk_px=50000):
+def read_acquisition_chunked(fh, acq, strict=True, chunk_px=50000, out_dtype=np.float32):
     md = acq.metadata
     data_start, data_end = int(md["DataStartOffset"]), int(md["DataEndOffset"])
     value_bytes = int(md.get("ValueBytes", 4))
@@ -85,7 +85,7 @@ def read_acquisition_chunked(fh, acq, strict=True, chunk_px=50000):
         raise OSError(f"Acquisition data size mismatch for '{acq.description}'")
 
     num_pixels = data_size // bpp
-    img = np.zeros((num_channels, height, width), dtype=np.float32)
+    img = np.zeros((num_channels, height, width), dtype=out_dtype)
 
     fh.seek(data_start)
     remaining = num_pixels
@@ -98,8 +98,10 @@ def read_acquisition_chunked(fh, acq, strict=True, chunk_px=50000):
         valid = (0 <= xs) & (xs < width) & (0 <= ys) & (ys < height)
         xs, ys, chunk = xs[valid], ys[valid], chunk[valid]
 
-        for c in range(num_channels):
-            img[c, ys, xs] = chunk[:, c + 3]
+        vals = chunk[:, 3:]
+        if out_dtype == np.uint16:
+            vals = np.clip(vals, 0, 65535).astype(np.uint16)
+        img[:, ys, xs] = vals.T
 
         remaining -= n
 
@@ -202,19 +204,17 @@ def read_ome_metadata_only(tiff_path: Path):
             int(pixels.get("SizeY", "0")),
         )
 
-def read_channel_lazy(tiff_path: Path, channel_idx: int) -> np.ndarray:
-    with tiff.TiffFile(tiff_path) as tif:
-        if not tif.series:
-            raise ValueError("Could not read TIFF data")
-        if len(tif.series) == 1:
-            return tif.series[0].levels[0].pages[channel_idx].asarray()
-        return tif.series[channel_idx].asarray()
+def _channel_page(src: tiff.TiffFile, channel_idx: int):
+    """Return the tifffile page for a channel, handling single-series and per-channel-series OME-TIFFs."""
+    if len(src.series) == 1:
+        return src.series[0].levels[0].pages[channel_idx]
+    return src.series[channel_idx]
 
 def _to_output_dtype(arr: np.ndarray, output_type: str) -> np.ndarray:
     """Cast to the output dtype. Clip before a uint16 cast so resampled/overshoot values don't wrap into bright artifacts."""
     if output_type == "uint16":
         return np.clip(arr, 0, 65535).astype(np.uint16)
-    return arr.astype(np.float32)
+    return arr.astype(np.float32, copy=False)
 
 def write_planes(output_path, ome_xml, planes, compression, output_type, tile=(256, 256)):
     """Write 2D channel planes to one OME-TIFF (OME-XML on the first plane; tile=None for strips)."""
@@ -258,8 +258,12 @@ def write_ome_tiff_streaming(
         physical_y=phys_y,
     )
 
-    planes = (read_channel_lazy(input_path, ch_idx) for ch_idx in channel_indices)
-    write_planes(output_path, ome_xml, planes, compression, output_type, tile=(256, 256))
+    def planes():
+        with tiff.TiffFile(input_path) as src:                 # open once for all channels
+            for ch_idx in channel_indices:
+                yield _channel_page(src, ch_idx).asarray()
+
+    write_planes(output_path, ome_xml, planes(), compression, output_type, tile=(256, 256))
 
 def write_pyramidal_ome_tiff_streaming(
     input_path: Path,
@@ -273,10 +277,11 @@ def write_pyramidal_ome_tiff_streaming(
     channel_indices = channel_indices or list(range(len(channel_names)))
     selected_names = [channel_names[i] for i in channel_indices]
 
-    img = np.zeros((len(selected_names), size_y, size_x), dtype=np.float32)
-    for out_idx, ch_idx in enumerate(channel_indices):
-        img[out_idx] = read_channel_lazy(input_path, ch_idx)
-    img = _to_output_dtype(img, output_type)
+    out_dtype = np.uint16 if output_type == "uint16" else np.float32
+    img = np.zeros((len(selected_names), size_y, size_x), dtype=out_dtype)
+    with tiff.TiffFile(input_path) as src:
+        for out_idx, ch_idx in enumerate(channel_indices):
+            img[out_idx] = _to_output_dtype(_channel_page(src, ch_idx).asarray(), output_type)
 
     pyramid = create_pyramid(img, levels)
     ome_xml = ome_xml_builder(
