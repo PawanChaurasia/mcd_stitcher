@@ -1,5 +1,6 @@
 # ---------------------- Imports ----------------------
 import click
+import numpy as np
 
 from pathlib import Path
 from readimc import MCDFile
@@ -62,17 +63,19 @@ def mcd_convert(
     elif not out_dir:
         out_dir = input_path.parent / "MCD_Converted" / stem
 
+    out_np = np.uint16 if dtype == "uint16" else np.float32
+
     for roi_meta in rois:
         acq = roi_meta["acq"]
         name = acq.description
         tiff_path = out_dir / f"{name}.ome.tiff"
 
         try:
-            img = read_acquisition_chunked(mcd._fh, acq, strict=True)
+            img = read_acquisition_chunked(mcd._fh, acq, strict=True, out_dtype=out_np)
         except OSError:
             if not silent:
                 print(f"  Warning: strict read failed for {acq.description}. Retrying in recovery mode.")
-            img = read_acquisition_chunked(mcd._fh, acq, strict=False)
+            img = read_acquisition_chunked(mcd._fh, acq, strict=False, out_dtype=out_np)
 
         ome_xml = ome_xml_builder(
             channel_names=acq.channel_labels,
