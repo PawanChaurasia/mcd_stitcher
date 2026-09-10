@@ -148,7 +148,7 @@ def ome_xml_builder(
         td = ET.SubElement(pixels, 'TiffData', {'FirstC': str(i), 'FirstZ': '0', 'FirstT': '0', 'IFD': str(i), 'PlaneCount': '1' })
 
     ET.indent(ome, space='  ')
-    return ET.tostring(ome, encoding='unicode', xml_declaration=True)
+    return ET.tostring(ome, encoding='ascii', xml_declaration=True).decode('ascii')
 
 # ---------------------- Index / range parsing ----------------------
 def parse_index_string(value: str, max_idx: Optional[int] = None) -> Optional[List[int]]:
@@ -225,7 +225,7 @@ def write_planes(output_path, ome_xml, planes, compression, output_type, tile=(2
                 tile=tile,
                 compression=compression,
                 photometric="minisblack",
-                description=ome_xml if i == 0 else None,
+                description=ome_xml if i == 0 else None, metadata=None,
             )
             del plane
 
