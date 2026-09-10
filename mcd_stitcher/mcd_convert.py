@@ -2,6 +2,7 @@
 import click
 import numpy as np
 
+from contextlib import nullcontext
 from pathlib import Path
 from readimc import MCDFile
 from typing import List, Optional
@@ -36,72 +37,59 @@ def mcd_convert(
     Returns:
         Number of ROIs converted (0 if the MCD has no ROIs).
     """
-    close_mcd = False
-    if mcd is None:
-        mcd = MCDFile(input_path)
-        mcd.__enter__()
-        close_mcd = True
-
-    if rois is None:
-        try:
+    with (nullcontext(mcd) if mcd is not None else MCDFile(input_path)) as mcd:
+        if rois is None:
             rois = load_rois(mcd)
-        except Exception:
-            if close_mcd:
-                mcd.__exit__(None, None, None)
-            raise
 
-    if not rois:
-        if close_mcd:
-            mcd.__exit__(None, None, None)
-        if not silent:
-            print(f"  SKIPPED: No ROIs found in {input_path}")
-        return 0
-
-    stem = input_path.stem
-    if not out_dir and output_path:
-        out_dir = output_path / stem
-    elif not out_dir:
-        out_dir = input_path.parent / "MCD_Converted" / stem
-
-    out_np = np.uint16 if dtype == "uint16" else np.float32
-
-    for roi_meta in rois:
-        acq = roi_meta["acq"]
-        name = acq.description
-        tiff_path = out_dir / f"{name}.ome.tiff"
-
-        try:
-            img = read_acquisition_chunked(mcd._fh, acq, strict=True, out_dtype=out_np)
-        except OSError:
+        if not rois:
             if not silent:
-                print(f"  Warning: strict read failed for {acq.description}. Retrying in recovery mode.")
-            img = read_acquisition_chunked(mcd._fh, acq, strict=False, out_dtype=out_np)
+                print(f"  SKIPPED: No ROIs found in {input_path}")
+            return 0
 
-        ome_xml = ome_xml_builder(
-            channel_names=acq.channel_labels,
-            size_x=acq.width_px,
-            size_y=acq.height_px,
-            pixel_type={"uint16": "uint16", "float32": "float"}[dtype],
-            tiff_name=tiff_path.name,
-            image_id=f"Image:{acq.id}",
-            image_name=acq.description,
-            pixels_id=f"Pixels:{acq.id}",
-            channel_id_prefix=f"Channel:{acq.id}:",
-            physical_x=float(acq.metadata.get("AblationDistanceBetweenShotsX", 1.0)),
-            physical_y=float(acq.metadata.get("AblationDistanceBetweenShotsY", 1.0)),
-        )
+        stem = input_path.stem
+        if not out_dir and output_path:
+            out_dir = output_path / stem
+        elif not out_dir:
+            out_dir = input_path.parent / "MCD_Converted" / stem
 
-        make_dir(out_dir)
+        out_np = np.uint16 if dtype == "uint16" else np.float32
 
-        write_planes(
-            tiff_path, ome_xml,
-            (img[i] for i in range(img.shape[0])),
-            compression, dtype, tile=(256, 256),
-        )
-        del img
+        with open(input_path, "rb") as fh:
+            for roi_meta in rois:
+                acq = roi_meta["acq"]
+                name = acq.description
+                tiff_path = out_dir / f"{name}.ome.tiff"
 
-    if close_mcd:
-        mcd.__exit__(None, None, None)
+                try:
+                    img = read_acquisition_chunked(fh, acq, strict=True, out_dtype=out_np)
+                except OSError:
+                    if not silent:
+                        print(f"  Warning: strict read failed for {acq.description}. Retrying in recovery mode.")
+                    img = read_acquisition_chunked(fh, acq, strict=False, out_dtype=out_np)
+
+                ome_xml = ome_xml_builder(
+                    channel_names=acq.channel_labels,
+                    size_x=acq.width_px,
+                    size_y=acq.height_px,
+                    pixel_type={"uint16": "uint16", "float32": "float"}[dtype],
+                    tiff_name=tiff_path.name,
+                    image_id=f"Image:{acq.id}",
+                    image_name=acq.description,
+                    pixels_id=f"Pixels:{acq.id}",
+                    channel_id_prefix=f"Channel:{acq.id}:",
+                    physical_x=float(acq.metadata.get("AblationDistanceBetweenShotsX", 1.0)),
+                    physical_y=float(acq.metadata.get("AblationDistanceBetweenShotsY", 1.0)),
+                )
+
+                make_dir(out_dir)
+
+                write_planes(
+                    tiff_path, ome_xml,
+                    (img[i] for i in range(img.shape[0])),
+                    compression, dtype, tile=(256, 256),
+                )
+                del img
+
     if not silent:
         print(f"  Processed {input_path.name}: {len(rois)} ROI(s) converted")
 
