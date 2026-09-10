@@ -51,6 +51,9 @@ def tiff_subset(
     Returns:
         Number of files processed.
     """
+    if not list_channels and not filter and not pyramid:
+        raise click.ClickException("No action specified. Use list_channels, filter, or pyramid.")
+
     # -------- Delegated mode: process a pre-resolved list of paths --------
     if tiff_files is not None:
         count = 0
@@ -196,6 +199,12 @@ def subset_single_file(
     suffixes = (["filtered"] if filtered else []) + (["pyramid"] if pyramid else [])
     suffix_str = "_" + "_".join(suffixes) if suffixes else ""
     output_path = out_dir / f"{base}{suffix_str}.ome.tiff"
+
+    if output_path.resolve() == tiff_path.resolve():
+        raise ValueError(
+            f"refusing to overwrite the source file in place: {tiff_path}. "
+            "Choose a different output directory, or a filter/pyramid option that renames the output."
+        )
 
     if pyramid:
         write_pyramidal_ome_tiff_streaming(tiff_path, output_path, channel_indices, compression, output_type)
