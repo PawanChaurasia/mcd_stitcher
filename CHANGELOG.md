@@ -1,5 +1,27 @@
 # Changelog
 
+## Version 2.3.1 (2026-07-08)
+
+Relicenses the project under MIT, fixes a metadata limitation that blocked renaming single-file OME-TIFFs, lowers peak memory of pyramidal generation and `uint16` conversion, and relaxes dependency constraints for cleaner installs.
+
+### License
+- Relicensed from GPL-3.0-only to the MIT License.
+
+### Bug Fixes
+- Renamed single-file OME-TIFFs are no longer treated as broken multi-file datasets: `ome_xml_builder` no longer writes the `FileName` attribute on the OME-XML `<UUID>` element.
+
+### Performance
+- Pyramidal OME-TIFF generation (`--pyramid` / `tiff_subset -p`) uses roughly 3-4x less peak RAM on the default `uint16` path by building the channel stack in the output dtype one plane at a time instead of holding the whole stack in `float32`. Pixel data is unchanged.
+- Faster MCD reads (every convert and stitch): `read_acquisition_chunked` scatters all channels in a single vectorized assignment instead of a per-channel loop. Pixel data is unchanged.
+- Lower peak RAM for `uint16` convert: `read_acquisition_chunked` builds the channel stack directly in `uint16` (clipping during the read) instead of reading `float32` and casting afterward, roughly halving the RAM a convert holds. `float32` output and stitching are unaffected, and pixel data is unchanged.
+- Faster channel subsetting (`tiff_subset -f`, non-pyramid): the source OME-TIFF is opened once instead of once per channel. Pixel data is unchanged.
+
+### Dependencies
+- Relaxed dependency constraints to lower bounds (removing the 2.3.0 upper caps) to avoid resolver conflicts, and un-pinned `python-dateutil` and `readimc` from exact versions.
+
+### Compare
+- Full diff: https://github.com/PawanChaurasia/mcd_stitcher/compare/v2.3.0...v2.3.1
+
 ## Version 2.3.0 (2026-06-03)
 
 Adds `mcd_process`, a single command that opens each `.mcd` once and runs any mix of conversion, stitching, panorama export, ROI mapping, and metadata in one pass — with optional channel-subset and pyramid post-processing. Also unifies the OME-TIFF write path and pins dependency versions.
