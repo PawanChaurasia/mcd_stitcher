@@ -2,6 +2,7 @@
 import click
 import numpy as np
 
+from contextlib import nullcontext
 from pathlib import Path
 from typing import List, Optional
 
@@ -59,157 +60,142 @@ def mcd_stitch(
     Returns:
         Number of ROIs stitched (0 if no ROIs are found or selected).
     """
-    close_mcd = False
-    if mcd is None:
-        mcd = MCDFile(input_path)
-        mcd.__enter__()
-        close_mcd = True
-
-    if all_rois is None:
-        try:
+    with (nullcontext(mcd) if mcd is not None else MCDFile(input_path)) as mcd:
+        if all_rois is None:
             all_rois = load_rois(mcd)
-        except Exception:
-            if close_mcd:
-                mcd.__exit__(None, None, None)
-            raise
 
-    if not all_rois:
-        if close_mcd:
-            mcd.__exit__(None, None, None)
-        if not silent:
-            print(f"  SKIPPED: No ROIs found in {input_path}")
-        return 0
-
-    if selected_rois is None:
-        selected_rois = apply_roi_filter(all_rois, roi_arg)
-
-    if not selected_rois:
-        if close_mcd:
-            mcd.__exit__(None, None, None)
-        if not silent:
-            print(f"  SKIPPED: No ROIs selected for stitching")
-        return 0
-
-    stem = input_path.stem
-
-    if not out_dir:
-        if output_path:
-            out_dir = output_path
-        else:
-            out_dir = input_path.parent / "MCD_Stitched"
-
-    stitch_path = out_dir / f"{stem}_stitched.ome.tiff"
-    channel_labels = selected_rois[0]["channel_labels"]
-
-    selected_rois, min_x_um, max_x_um, min_y_um, max_y_um = compute_canvas_bounds(selected_rois)
-
-    canvas_width_um = max_x_um - min_x_um
-    canvas_height_um = max_y_um - min_y_um
-    global_px = min(px for r in selected_rois for px in r["pixel_size"])
-
-    canvas_width_px = int(np.ceil(canvas_width_um / global_px))
-    canvas_height_px = int(np.ceil(canvas_height_um / global_px))
-
-    channels = selected_rois[0]["num_channels"]
-
-    if dtype == "uint16":
-        canvas = np.zeros((channels, canvas_height_px, canvas_width_px), np.uint16)
-        ome_dtype = "uint16"
-    else:
-        canvas = np.zeros((channels, canvas_height_px, canvas_width_px), np.float32)
-        ome_dtype = "float"
-
-    for r in selected_rois:
-        try:
-            img = read_acquisition_chunked(mcd._fh, r["acq"], strict=True)
-        except OSError:
+        if not all_rois:
             if not silent:
-                print(f"  Warning: strict read failed for {r['description']}. Retrying in recovery mode.")
-            img = read_acquisition_chunked(mcd._fh, r["acq"], strict=False)
+                print(f"  SKIPPED: No ROIs found in {input_path}")
+            return 0
 
-        roi = r["roi_translated"]
-        px_x, px_y = r["pixel_size"]
-        C, h, w = img.shape
+        if selected_rois is None:
+            selected_rois = apply_roi_filter(all_rois, roi_arg)
 
-        scale_x = px_x / global_px
-        scale_y = px_y / global_px
-        h_new = int(np.ceil(h * scale_y))
-        w_new = int(np.ceil(w * scale_x))
+        if not selected_rois:
+            if not silent:
+                print(f"  SKIPPED: No ROIs selected for stitching")
+            return 0
 
-        # Resize to the global grid when the ROI resolution differs.
-        if np.isclose(px_x, global_px) and np.isclose(px_y, global_px):
-            planes = [img[c] for c in range(C)]
-        else:
-            planes = [
-                resize(
-                    img[c],
-                    (h_new, w_new),
-                    order=1, mode='reflect',
-                    preserve_range=True, anti_aliasing=True,
-                )
-                for c in range(C)
-            ]
+        stem = input_path.stem
 
-        # Clip to the output range before casting, matching mcd_convert.
+        if not out_dir:
+            if output_path:
+                out_dir = output_path
+            else:
+                out_dir = input_path.parent / "MCD_Stitched"
+
+        stitch_path = out_dir / f"{stem}_stitched.ome.tiff"
+        channel_labels = selected_rois[0]["channel_labels"]
+
+        selected_rois, min_x_um, max_x_um, min_y_um, max_y_um = compute_canvas_bounds(selected_rois)
+
+        canvas_width_um = max_x_um - min_x_um
+        canvas_height_um = max_y_um - min_y_um
+        global_px = min(px for r in selected_rois for px in r["pixel_size"])
+
+        canvas_width_px = int(np.ceil(canvas_width_um / global_px))
+        canvas_height_px = int(np.ceil(canvas_height_um / global_px))
+
+        channels = selected_rois[0]["num_channels"]
+
         if dtype == "uint16":
-            resized = np.stack([np.clip(p, 0, 65535).astype(np.uint16) for p in planes])
+            canvas = np.zeros((channels, canvas_height_px, canvas_width_px), np.uint16)
+            ome_dtype = "uint16"
         else:
-            resized = np.stack([p.astype(np.float32) for p in planes])
+            canvas = np.zeros((channels, canvas_height_px, canvas_width_px), np.float32)
+            ome_dtype = "float"
 
-        del img, planes
+        with open(input_path, "rb") as fh:
+            for r in selected_rois:
+                try:
+                    img = read_acquisition_chunked(fh, r["acq"], strict=True)
+                except OSError:
+                    if not silent:
+                        print(f"  Warning: strict read failed for {r['description']}. Retrying in recovery mode.")
+                    img = read_acquisition_chunked(fh, r["acq"], strict=False)
 
-        xs_r = np.array([x for x, _ in roi])
-        ys_r = np.array([y for _, y in roi])
-        min_x_roi, min_y_roi = xs_r.min(), ys_r.min()
+                roi = r["roi_translated"]
+                px_x, px_y = r["pixel_size"]
+                C, h, w = img.shape
 
-        poly_x = (xs_r - min_x_roi) / global_px
-        poly_y = (ys_r - min_y_roi) / global_px
-        rr, cc = polygon(poly_y, poly_x, (h_new, w_new))
-        mask = np.zeros((h_new, w_new), bool)
-        mask[rr, cc] = True
+                scale_x = px_x / global_px
+                scale_y = px_y / global_px
+                h_new = int(np.ceil(h * scale_y))
+                w_new = int(np.ceil(w * scale_x))
 
-        canvas_x = int(round(min_x_roi / global_px))
-        canvas_y = canvas_height_px - int(round(min_y_roi / global_px)) - h_new
+                # Resize to the global grid when the ROI resolution differs.
+                if np.isclose(px_x, global_px) and np.isclose(px_y, global_px):
+                    planes = [img[c] for c in range(C)]
+                else:
+                    planes = [
+                        resize(
+                            img[c],
+                            (h_new, w_new),
+                            order=1, mode='reflect',
+                            preserve_range=True, anti_aliasing=True,
+                        )
+                        for c in range(C)
+                    ]
 
-        y0, y1 = max(0, canvas_y), min(canvas_height_px, canvas_y + h_new)
-        x0, x1 = max(0, canvas_x), min(canvas_width_px, canvas_x + w_new)
-        h_slice = y1 - y0
-        w_slice = x1 - x0
+                # Clip to the output range before casting, matching mcd_convert.
+                if dtype == "uint16":
+                    resized = np.stack([np.clip(p, 0, 65535).astype(np.uint16) for p in planes])
+                else:
+                    resized = np.stack([p.astype(np.float32) for p in planes])
 
-        for c in range(C):
-            roi_slice = resized[c, :h_slice, :w_slice]
-            canvas_slice = canvas[c, y0:y1, x0:x1]
-            mask_slice = mask[:h_slice, :w_slice]
-            valid_pixels = mask_slice & (roi_slice > 0)
-            canvas_slice[valid_pixels] = roi_slice[valid_pixels]
+                del img, planes
 
-        del resized
+                xs_r = np.array([x for x, _ in roi])
+                ys_r = np.array([y for _, y in roi])
+                min_x_roi, min_y_roi = xs_r.min(), ys_r.min()
 
-    make_dir(out_dir)
+                poly_x = (xs_r - min_x_roi) / global_px
+                poly_y = (ys_r - min_y_roi) / global_px
+                rr, cc = polygon(poly_y, poly_x, (h_new, w_new))
+                mask = np.zeros((h_new, w_new), bool)
+                mask[rr, cc] = True
 
-    ome_xml = ome_xml_builder(
-        channel_names=channel_labels,
-        size_x=canvas.shape[2],
-        size_y=canvas.shape[1],
-        pixel_type=ome_dtype,
-        tiff_name=stitch_path.name,
-        image_id='Image:Stitched',
-        image_name=stitch_path.name,
-        pixels_id='Pixels:Stitched',
-        channel_id_prefix='Channel:Stitched:',
-        physical_x=global_px,
-        physical_y=global_px,
-    )
+                canvas_x = int(round(min_x_roi / global_px))
+                canvas_y = canvas_height_px - int(round(min_y_roi / global_px)) - h_new
 
-    write_planes(
-        stitch_path, ome_xml,
-        (canvas[c] for c in range(canvas.shape[0])),
-        compression, dtype, tile=(256, 256),
-    )
-    del canvas
+                y0, y1 = max(0, canvas_y), min(canvas_height_px, canvas_y + h_new)
+                x0, x1 = max(0, canvas_x), min(canvas_width_px, canvas_x + w_new)
+                h_slice = y1 - y0
+                w_slice = x1 - x0
 
-    if close_mcd:
-        mcd.__exit__(None, None, None)
+                for c in range(C):
+                    roi_slice = resized[c, :h_slice, :w_slice]
+                    canvas_slice = canvas[c, y0:y1, x0:x1]
+                    mask_slice = mask[:h_slice, :w_slice]
+                    valid_pixels = mask_slice & (roi_slice > 0)
+                    canvas_slice[valid_pixels] = roi_slice[valid_pixels]
+
+                del resized
+
+        make_dir(out_dir)
+
+        ome_xml = ome_xml_builder(
+            channel_names=channel_labels,
+            size_x=canvas.shape[2],
+            size_y=canvas.shape[1],
+            pixel_type=ome_dtype,
+            tiff_name=stitch_path.name,
+            image_id='Image:Stitched',
+            image_name=stitch_path.name,
+            pixels_id='Pixels:Stitched',
+            channel_id_prefix='Channel:Stitched:',
+            physical_x=global_px,
+            physical_y=global_px,
+        )
+
+        write_planes(
+            stitch_path, ome_xml,
+            (canvas[c] for c in range(canvas.shape[0])),
+            compression, dtype, tile=(256, 256),
+        )
+        del canvas
+
     if not silent:
         print(f"  Processed {input_path.name}: {len(selected_rois)} ROIs stitched")
     return len(selected_rois)
