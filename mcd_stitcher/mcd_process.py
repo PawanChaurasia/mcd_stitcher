@@ -37,7 +37,7 @@ def mcd_process(
     roi: Optional[str] = None,
     output_type: str = "uint16",
     compression: str = "zstd",
-) -> None:
+) -> int:
     """Unified MCD processing pipeline.
 
     Orchestrates operations across mcd_convert and mcd_stitch modules.
@@ -57,6 +57,10 @@ def mcd_process(
         roi: ROI filter. None | "0,2,5" | "3,5-6,2".
         output_type: "uint16" or "float32".
         compression: "zstd" | "LZW" | "None".
+
+    Returns:
+        Number of .mcd files that failed. Failures are reported and skipped so a
+        batch run completes; the CLI exits non-zero when this is greater than 0.
     """
 
 
@@ -69,125 +73,132 @@ def mcd_process(
 
     mcd_files = resolve_mcd_files(input_path)
     start_all = time.time()
+    failures = []
 
     for mcd_file in mcd_files:
         start_mcd = time.time()
         stem = mcd_file.stem
         print(f"Processing MCD: {mcd_file.name}")
 
-        if output_path:
-            out_dir = output_path / stem
-        else:
-            out_dir = mcd_file.parent / "MCD_Processed" / stem
-        make_dir(out_dir)
-
-        mcd = MCDFile(mcd_file)
-        mcd.__enter__()
-
         try:
-            rois = load_rois(mcd)
-        except Exception:
-            mcd.__exit__(None, None, None)
-            print(f"  SKIPPED: No ROIs found in {mcd_file}")
-            continue
-
-        if not rois:
-            mcd.__exit__(None, None, None)
-            print(f"  SKIPPED: No ROIs found in {mcd_file}")
-            continue
-
-        panoramas = []
-        for si, slide in enumerate(mcd.slides):
-            pano_list = getattr(slide, 'panoramas', []) or []
-            for pi, pano in enumerate(pano_list):
-                panoramas.append({
-                    "slide_index": si,
-                    "index": pi,
-                    "slide": slide,
-                    "pano": pano,
-                })
-
-        channels = rois[0]["channel_labels"]
-        all_rois = list(rois)
-        selected_rois = apply_roi_filter(rois, roi)
-
-        if metadata:
-            _op_metadata(stem, selected_rois, channels, panoramas)
-
-        if panorama is not None:
-            print(f"  Exporting {len(panoramas)} panorama(s)... ", end="", flush=True)
-            t0 = time.time()
-            _op_panorama(mcd, stem, panoramas, all_rois, out_dir, panorama)
-            print(f"done ({time.time() - t0:.1f}s)")
-
-        if roi_map is not None:
-            if stitch:
-                canvas_bounds = compute_canvas_bounds(selected_rois)
-                mapped_rois = canvas_bounds[0]
-                global_px = min(r["pixel_size"][0] for r in selected_rois)
-                _, min_x_um, max_x_um, min_y_um, max_y_um = canvas_bounds
-                canvas_px_w = int(math.ceil((max_x_um - min_x_um) / global_px))
-                canvas_px_h = int(math.ceil((max_y_um - min_y_um) / global_px))
-                canvas_pixel_dims = (canvas_px_w, canvas_px_h)
-                _op_roi_map(mcd, stem, panoramas, mapped_rois,
-                            canvas_bounds, canvas_pixel_dims, out_dir, roi_map, convert=convert)
+            if output_path:
+                out_dir = output_path / stem
             else:
-                _op_roi_map(mcd, stem, panoramas, all_rois, None, None, out_dir, roi_map, convert=convert)
+                out_dir = mcd_file.parent / "MCD_Processed" / stem
+            make_dir(out_dir)
 
-        if convert:
-            print(f"  Converting {len(selected_rois)} ROI(s)... ", end="", flush=True)
-            t0 = time.time()
-            mcd_convert(
-                input_path=mcd_file,
-                out_dir=out_dir,
-                dtype=output_type,
-                compression=compression,
-                silent=True,
-                mcd=mcd,
-                rois=selected_rois,
-            )
-            print(f"done ({time.time() - t0:.1f}s)")
+            with MCDFile(mcd_file) as mcd:
+                try:
+                    rois = load_rois(mcd)
+                except Exception:
+                    print(f"  SKIPPED: No ROIs found in {mcd_file}")
+                    continue
 
-        if stitch:
-            print(f"  Stitching {len(selected_rois)} ROI(s)... ", end="", flush=True)
-            t0 = time.time()
-            mcd_stitch(
-                input_path=mcd_file,
-                out_dir=out_dir,
-                dtype=output_type,
-                compression=compression,
-                silent=True,
-                mcd=mcd,
-                all_rois=all_rois,
-                selected_rois=selected_rois,
-            )
-            print(f"done ({time.time() - t0:.1f}s)")
+                if not rois:
+                    print(f"  SKIPPED: No ROIs found in {mcd_file}")
+                    continue
 
-        if filter or pyramid:
-            produced = []
-            if convert:
-                produced.extend(out_dir / f"{r['acq'].description}.ome.tiff" for r in selected_rois)
-            if stitch:
-                produced.append(out_dir / f"{stem}_stitched.ome.tiff")
-            if produced:
-                print(f"  Post-processing {len(produced)} file(s)... ", end="", flush=True)
-                t0 = time.time()
-                tiff_subset(
-                    tiff_files=produced,
-                    out_dir=out_dir,
-                    filter=filter,
-                    pyramid=pyramid,
-                    output_type=output_type,
-                    compression=compression,
-                    silent=True,
-                )
-                print(f"done ({time.time() - t0:.1f}s)")
+                panoramas = []
+                for si, slide in enumerate(mcd.slides):
+                    pano_list = getattr(slide, 'panoramas', []) or []
+                    for pi, pano in enumerate(pano_list):
+                        panoramas.append({
+                            "slide_index": si,
+                            "index": pi,
+                            "slide": slide,
+                            "pano": pano,
+                        })
 
-        mcd.__exit__(None, None, None)
+                channels = rois[0]["channel_labels"]
+                all_rois = list(rois)
+                selected_rois = apply_roi_filter(rois, roi)
 
-        print(f"  Processed {mcd_file.name} in {time.time() - start_mcd:.1f}s")
+                if metadata:
+                    _op_metadata(stem, selected_rois, channels, panoramas)
+
+                if panorama is not None:
+                    print(f"  Exporting {len(panoramas)} panorama(s)... ", end="", flush=True)
+                    t0 = time.time()
+                    _op_panorama(mcd, stem, panoramas, all_rois, out_dir, panorama)
+                    print(f"done ({time.time() - t0:.1f}s)")
+
+                if roi_map is not None:
+                    if stitch:
+                        canvas_bounds = compute_canvas_bounds(selected_rois)
+                        mapped_rois = canvas_bounds[0]
+                        global_px = min(r["pixel_size"][0] for r in selected_rois)
+                        _, min_x_um, max_x_um, min_y_um, max_y_um = canvas_bounds
+                        canvas_px_w = int(math.ceil((max_x_um - min_x_um) / global_px))
+                        canvas_px_h = int(math.ceil((max_y_um - min_y_um) / global_px))
+                        canvas_pixel_dims = (canvas_px_w, canvas_px_h)
+                        _op_roi_map(mcd, stem, panoramas, mapped_rois,
+                                    canvas_bounds, canvas_pixel_dims, out_dir, roi_map, convert=convert)
+                    else:
+                        _op_roi_map(mcd, stem, panoramas, all_rois, None, None, out_dir, roi_map, convert=convert)
+
+                if convert:
+                    print(f"  Converting {len(selected_rois)} ROI(s)... ", end="", flush=True)
+                    t0 = time.time()
+                    mcd_convert(
+                        input_path=mcd_file,
+                        out_dir=out_dir,
+                        dtype=output_type,
+                        compression=compression,
+                        silent=True,
+                        mcd=mcd,
+                        rois=selected_rois,
+                    )
+                    print(f"done ({time.time() - t0:.1f}s)")
+
+                if stitch:
+                    print(f"  Stitching {len(selected_rois)} ROI(s)... ", end="", flush=True)
+                    t0 = time.time()
+                    mcd_stitch(
+                        input_path=mcd_file,
+                        out_dir=out_dir,
+                        dtype=output_type,
+                        compression=compression,
+                        silent=True,
+                        mcd=mcd,
+                        all_rois=all_rois,
+                        selected_rois=selected_rois,
+                    )
+                    print(f"done ({time.time() - t0:.1f}s)")
+
+                if filter or pyramid:
+                    produced = []
+                    if convert:
+                        produced.extend(out_dir / f"{r['acq'].description}.ome.tiff" for r in selected_rois)
+                    if stitch:
+                        produced.append(out_dir / f"{stem}_stitched.ome.tiff")
+                    if produced:
+                        print(f"  Post-processing {len(produced)} file(s)... ", end="", flush=True)
+                        t0 = time.time()
+                        tiff_subset(
+                            tiff_files=produced,
+                            out_dir=out_dir,
+                            filter=filter,
+                            pyramid=pyramid,
+                            output_type=output_type,
+                            compression=compression,
+                            silent=True,
+                        )
+                        print(f"done ({time.time() - t0:.1f}s)")
+
+            print(f"  Processed {mcd_file.name} in {time.time() - start_mcd:.1f}s")
+        except Exception as exc:
+            failures.append((mcd_file.name, exc))
+            print(f"  FAILED: {mcd_file.name}: {type(exc).__name__}: {exc}")
 
     print(f"Finished all MCDs in {time.time() - start_all:.1f}s")
+
+    if failures:
+        print()
+        print(f"{len(failures)} of {len(mcd_files)} file(s) failed:")
+        for name, exc in failures:
+            print(f"  {name}: {type(exc).__name__}: {exc}")
+
+    return len(failures)
 
 
 # ---------------------- Operation Implementations ----------------------
@@ -379,7 +390,7 @@ def _cli_main(ctx, convert, stitch, panorama, metadata, roi_map, filter, pyramid
     if panorama is not None and panorama != "all" and not panorama.replace("-", "").replace(",", "").isdigit():
         raise click.ClickException("Panorama argument must be 'all' or comma-separated indices (e.g., '0,1,2').")
 
-    mcd_process(
+    failed = mcd_process(
         input_path=input_path,
         output_path=output_path,
         convert=convert,
@@ -393,6 +404,9 @@ def _cli_main(ctx, convert, stitch, panorama, metadata, roi_map, filter, pyramid
         output_type=output_type,
         compression=compression,
     )
+
+    if failed:
+        ctx.exit(1)
 
 
 if __name__ == "__main__":
