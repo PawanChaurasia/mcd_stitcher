@@ -1,5 +1,24 @@
 # Changelog
 
+## Version 2.3.2 (2026-09-11)
+
+Fixes the OME-TIFF container so Python readers see every channel, allows non-ASCII channel labels, and makes batch runs survive a bad file. Pixel data is unchanged, but existing files should be regenerated: OME-TIFFs written by earlier versions expose only their first channel to `tifffile`.
+
+### Bug Fixes
+- OME-TIFFs are now written as a single `CYX` series. `write_planes` passed `description=None` for every plane after the first, which made `tifffile` fall back to its own shaped metadata and describe the file as N single-plane series; `tifffile.imread()` consequently returned only the first channel. Bio-Formats readers (QuPath / Fiji) were never affected because they honour the OME-XML. Pixel data is unchanged.
+- Non-ASCII channel labels and ROI descriptions (`α-SMA`, `β-catenin`, `γH2AX`) no longer abort the write with `ValueError: TIFF strings must be 7-bit ASCII`. `ome_xml_builder` emits them as XML numeric character references, which round-trip to the original text on read.
+- `tiff_subset()` no longer destroys its input when called through the Python API with neither a channel filter nor `pyramid`. The output path resolved to the input path, so the source was truncated in place and the run still reported success. The CLI was already guarded; the guard now lives in the function, and `subset_single_file` refuses outright to write over its own source.
+- `.mcd` file handles are no longer leaked when an exception is raised mid-run. `mcd_convert`, `mcd_stitch`, and `mcd_process` manage the file with a context manager instead of paired `__enter__` / `__exit__` calls at each exit point.
+
+### Enhancements
+- `mcd_process` continues to the next `.mcd` when one fails instead of aborting the batch. Each failure is reported inline as `FAILED: <file>: <error>`, all failures are listed again at the end, and the CLI exits non-zero if any occurred. `mcd_process()` returns the number of failed files.
+
+### Internal
+- Dropped the dependency on `readimc`'s private `_fh` attribute. `mcd_convert` and `mcd_stitch` open their own read handle for raw acquisition data; `readimc` is now used only for metadata parsing. Output verified byte-identical against real data.
+
+### Compare
+- Full diff: https://github.com/PawanChaurasia/mcd_stitcher/compare/v2.3.1...v2.3.2
+
 ## Version 2.3.1 (2026-07-08)
 
 Relicenses the project under MIT, fixes a metadata limitation that blocked renaming single-file OME-TIFFs, lowers peak memory of pyramidal generation and `uint16` conversion, and relaxes dependency constraints for cleaner installs.
