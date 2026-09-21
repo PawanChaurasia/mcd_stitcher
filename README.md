@@ -1,21 +1,7 @@
-<table>
-<tr>
-<td width="96" valign="middle">
-<img src="https://raw.githubusercontent.com/PawanChaurasia/mcd_stitcher/main/docs/img/logo.png" width="80" alt="MCD Stitcher">
-</td>
-<td valign="middle">
-
-# MCD Stitcher
-
-Whole-slide conversion and stitching for Imaging Mass Cytometry.
-
-</td>
-</tr>
-</table>
+![MCD Stitcher — whole-slide conversion and stitching for Imaging Mass Cytometry](https://raw.githubusercontent.com/PawanChaurasia/mcd_stitcher/main/docs/img/header.webp)
 
 [![PyPI](https://img.shields.io/pypi/v/mcd_stitcher?label=PyPI&color=3fb950&style=flat-square)](https://pypi.org/project/mcd_stitcher/)
 [![Python](https://img.shields.io/badge/Python-3.9%20%E2%80%93%203.13-blue?style=flat-square)](https://www.python.org/downloads/)
-[![PyPI Downloads](https://img.shields.io/pypi/dm/mcd-stitcher?label=Downloads&color=238636&style=flat-square&v=1)](https://pypistats.org/packages/mcd-stitcher)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow?style=flat-square)](https://github.com/PawanChaurasia/mcd_stitcher/blob/main/LICENSE)
 [![DOI](https://img.shields.io/badge/DOI-10.64898%2F2026.06.26.732348-B31B1B?style=flat-square)](https://doi.org/10.64898/2026.06.26.732348)
 
