@@ -1,25 +1,40 @@
 # ---------------------- Imports ----------------------
-import uuid
+import os
+import math
+import re
+import shutil
+
 import click
 import numpy as np
 import tifffile as tiff
 import xml.etree.ElementTree as ET
 
 from pathlib import Path
-from readimc import MCDFile
+from ._mcdread import MCDFile
+from .fastio import atomic_write
 from dateutil.parser import isoparse
-from typing import List, Optional, Sequence
+from typing import List, Optional, Sequence, Union
 from PIL import Image, ImageDraw, ImageFont
-from importlib.metadata import version, PackageNotFoundError
+from datetime import timezone
 
 
 # ---------------------- Package metadata ----------------------
-try:
-    CREATOR = f'MCD_Stitcher v{version("mcd_stitcher")}'
-except PackageNotFoundError:
-    CREATOR = 'MCD_Stitcher'
+
+from ._version import __version__ as _v
+CREATOR = f'MCD_Stitcher v{_v}'
+_UNSAFE_NAME = re.compile(r'[<>:"/\\|?*]')
 
 # ---------------------- File/Filesystem helpers ----------------------
+
+PathLike = Union[str, os.PathLike]
+
+def as_path(value):
+    if value is None or isinstance(value, Path):
+        return value
+    if isinstance(value, (list, tuple)):
+        return [as_path(v) for v in value]
+    return Path(value)
+
 def resolve_mcd_files(input_path: Path) -> List[Path]:
     if input_path.is_file() and input_path.suffix.lower() == ".mcd":
         return [input_path]
@@ -33,7 +48,6 @@ def resolve_mcd_files(input_path: Path) -> List[Path]:
     raise click.ClickException("Input must be a .mcd file or a folder of .mcd files")
 
 def validate_mcd_file(ctx, param, value):
-    """Click callback: reject non-.mcd input (folders are already handled by dir_okay=False)."""
     if value is not None and value.suffix.lower() != ".mcd":
         raise click.BadParameter(f"expected a .mcd file (got: {value.name}).")
     return value
@@ -41,7 +55,38 @@ def validate_mcd_file(ctx, param, value):
 def make_dir(path: Path):
     path.mkdir(parents=True, exist_ok=True)
 
+def format_channel_grid(channels: Sequence[str], indent: str = "  ", gap: int = 2) -> str:
+    labels = [f"{i}: {name}" for i, name in enumerate(channels)]
+    if not labels:
+        return ""
+    width = shutil.get_terminal_size((100, 24)).columns
+    col_w = max(len(x) for x in labels) + gap
+    cols = max(1, (width - len(indent)) // col_w)
+    rows = math.ceil(len(labels) / cols)
+    lines = []
+    for r in range(rows):
+        row = [labels[r + c * rows] for c in range(cols) if r + c * rows < len(labels)]
+        lines.append(indent + "".join(x.ljust(col_w) for x in row).rstrip())
+    return "\n".join(lines)
+
 # ---------------------- MCD processing helpers ----------------------
+
+def enumerate_panoramas(mcd: MCDFile) -> List[dict]:
+    panoramas = []
+    for si, slide in enumerate(mcd.slides):
+        for pi, pano in enumerate(getattr(slide, "panoramas", []) or []):
+            panoramas.append({
+                "slide_index": si,
+                "index": pi,
+                "slide": slide,
+                "pano": pano,
+            })
+    return panoramas
+
+def roi_time_key(r: dict):
+    d = isoparse(r["timestamp"])
+    return d if d.tzinfo else d.replace(tzinfo=timezone.utc)
+
 def load_rois(mcd: MCDFile) -> List[dict]:
     roi_metadata = []
     for slide in mcd.slides:
@@ -52,7 +97,8 @@ def load_rois(mcd: MCDFile) -> List[dict]:
                 "slide": slide,
                 "acq": acq,
                 "description": acq.description,
-                "timestamp": acq.metadata.get("StartTimeStamp"),
+                "timestamp": (acq.metadata.get("StartTimeStamp")
+                              or acq.metadata.get("EndTimeStamp")),
                 "roi_coords": acq.roi_points_um,
                 "pixel_size": (acq.pixel_size_x_um, acq.pixel_size_y_um),
                 "width": acq.width_px,
@@ -61,11 +107,21 @@ def load_rois(mcd: MCDFile) -> List[dict]:
                 "num_channels": acq.num_channels,
             })
 
-    roi_metadata.sort(
-        key=lambda r: isoparse(r["timestamp"]) if r["timestamp"] else "",
-        reverse=True,
-    )
+    roi_metadata.sort(key=roi_time_key, reverse=True)
+    _name_files(sorted(roi_metadata, key=roi_time_key))
     return roi_metadata
+
+def _name_files(rois: List[dict]) -> None:
+    """Give each ROI an output file stem: its description, safe as a file name and unique in its file."""
+    used = set()
+    for r in rois:
+        base = _UNSAFE_NAME.sub("_", (r["description"] or "").strip()).rstrip(". ") or f"ROI_{r['acq'].id}"
+        stem, n = base, 1
+        while stem.lower() in used:
+            n += 1
+            stem = f"{base}_{n}"
+        used.add(stem.lower())
+        r["file_stem"] = stem
 
 def read_acquisition_chunked(fh, acq, strict=True, chunk_px=50000, out_dtype=np.float32):
     md = acq.metadata
@@ -151,8 +207,8 @@ def ome_xml_builder(
     return ET.tostring(ome, encoding='ascii', xml_declaration=True).decode('ascii')
 
 # ---------------------- Index / range parsing ----------------------
+
 def parse_index_string(value: str, max_idx: Optional[int] = None) -> Optional[List[int]]:
-    """Parse "all" (-> None), "0,2,5", "1-5" into an ordered, de-duplicated index list; max_idx range-checks each."""
     if value == "all":
         return None
 
@@ -182,7 +238,6 @@ def parse_index_string(value: str, max_idx: Optional[int] = None) -> Optional[Li
     return indices
 
 def parse_channels(filter_str: str) -> List[int]:
-    """Parse a channel-filter string (e.g. "0-5,7") into a sorted, de-duplicated index list."""
     return sorted(parse_index_string(filter_str) or [])
 
 # ---------------------- TIFF / OME helpers ----------------------
@@ -205,20 +260,17 @@ def read_ome_metadata_only(tiff_path: Path):
         )
 
 def _channel_page(src: tiff.TiffFile, channel_idx: int):
-    """Return the tifffile page for a channel, handling single-series and per-channel-series OME-TIFFs."""
     if len(src.series) == 1:
         return src.series[0].levels[0].pages[channel_idx]
     return src.series[channel_idx]
 
 def _to_output_dtype(arr: np.ndarray, output_type: str) -> np.ndarray:
-    """Cast to the output dtype. Clip before a uint16 cast so resampled/overshoot values don't wrap into bright artifacts."""
     if output_type == "uint16":
         return np.clip(arr, 0, 65535).astype(np.uint16)
     return arr.astype(np.float32, copy=False)
 
 def write_planes(output_path, ome_xml, planes, compression, output_type, tile=(256, 256)):
-    """Write 2D channel planes to one OME-TIFF (OME-XML on the first plane; tile=None for strips)."""
-    with tiff.TiffWriter(output_path, bigtiff=True) as writer:
+    with atomic_write(output_path) as part, tiff.TiffWriter(part, bigtiff=True) as writer:
         for i, plane in enumerate(planes):
             writer.write(
                 _to_output_dtype(plane, output_type),
@@ -259,11 +311,24 @@ def write_ome_tiff_streaming(
     )
 
     def planes():
-        with tiff.TiffFile(input_path) as src:                 # open once for all channels
+        with tiff.TiffFile(input_path) as src:
             for ch_idx in channel_indices:
                 yield _channel_page(src, ch_idx).asarray()
 
     write_planes(output_path, ome_xml, planes(), compression, output_type, tile=(256, 256))
+
+def _write_pyramid_in_memory(input_path, output_path, channel_indices, out_np, output_type,
+                             size_x, size_y, levels, ome_xml, opts):
+    img = np.zeros((len(channel_indices), size_y, size_x), dtype=out_np)
+    with tiff.TiffFile(input_path) as src:
+        for out_idx, ch_idx in enumerate(channel_indices):
+            img[out_idx] = _to_output_dtype(_channel_page(src, ch_idx).asarray(), output_type)
+
+    with atomic_write(output_path) as part, tiff.TiffWriter(part, bigtiff=True) as tif:
+        for i, level in enumerate(create_pyramid(img, levels)):
+            tif.write(level, subifds=levels - 1 if i == 0 else None,
+                      subfiletype=1 if i > 0 else None,
+                      description=ome_xml if i == 0 else None, **opts)
 
 def write_pyramidal_ome_tiff_streaming(
     input_path: Path,
@@ -277,13 +342,6 @@ def write_pyramidal_ome_tiff_streaming(
     channel_indices = channel_indices or list(range(len(channel_names)))
     selected_names = [channel_names[i] for i in channel_indices]
 
-    out_dtype = np.uint16 if output_type == "uint16" else np.float32
-    img = np.zeros((len(selected_names), size_y, size_x), dtype=out_dtype)
-    with tiff.TiffFile(input_path) as src:
-        for out_idx, ch_idx in enumerate(channel_indices):
-            img[out_idx] = _to_output_dtype(_channel_page(src, ch_idx).asarray(), output_type)
-
-    pyramid = create_pyramid(img, levels)
     ome_xml = ome_xml_builder(
         channel_names=selected_names,
         size_x=size_x,
@@ -294,12 +352,57 @@ def write_pyramidal_ome_tiff_streaming(
         physical_y=phys_y,
     )
 
-    with tiff.TiffWriter(output_path, bigtiff=True) as tif:
-        opts = dict(tile=(256, 256), compression=compression, photometric="minisblack", metadata={"axes": "CYX"})
-        for i, level in enumerate(pyramid):
-            tif.write(level, subifds=levels - 1 if i == 0 else None, subfiletype=1 if i > 0 else None,
-                      description=ome_xml if i == 0 else None, **opts)
+    opts = dict(tile=(256, 256), compression=compression, photometric="minisblack",
+                metadata={"axes": "CYX"})
 
+    out_np = np.uint16 if output_type == "uint16" else np.float32
+    n_ch = len(channel_indices)
+
+    th, tw = opts["tile"]
+
+    def level_tiles(step, out_h, out_w):
+        with tiff.TiffFile(input_path) as src:
+            for ch_idx in channel_indices:
+                plane = _to_output_dtype(_channel_page(src, ch_idx).asarray(), output_type)
+                if step > 1:
+                    plane = plane[::step, ::step]
+                for y in range(0, out_h, th):
+                    for x in range(0, out_w, tw):
+                        blk = plane[y:y + th, x:x + tw]
+                        if blk.shape == (th, tw):
+                            yield blk
+                        else:
+                            pad = np.zeros((th, tw), dtype=blk.dtype)
+                            pad[:blk.shape[0], :blk.shape[1]] = blk
+                            yield pad
+                del plane
+
+    stack_bytes = n_ch * size_y * size_x * np.dtype(out_np).itemsize
+    try:
+        from .fastio import work_budget
+        room = work_budget()
+    except Exception:
+        room = 3 * 2 ** 30
+    if stack_bytes * 1.15 < room:
+        _write_pyramid_in_memory(input_path, output_path, channel_indices, out_np,
+                                 output_type, size_x, size_y, levels, ome_xml, opts)
+        return
+
+    with atomic_write(output_path) as part, tiff.TiffWriter(part, bigtiff=True) as tif:
+        for level in range(levels):
+            step = 2 ** level
+            out_h = len(range(0, size_y, step))
+            out_w = len(range(0, size_x, step))
+            shape = (n_ch, out_h, out_w)
+            tif.write(
+                level_tiles(step, out_h, out_w),
+                shape=shape,
+                dtype=out_np,
+                subifds=levels - 1 if level == 0 else None,
+                subfiletype=1 if level > 0 else None,
+                description=ome_xml if level == 0 else None,
+                **opts,
+            )
 
 # ---------------------- Canvas bounds ----------------------
 
@@ -319,8 +422,9 @@ def compute_canvas_bounds(rois: List[dict]):
 
     return rois_translated, min_x_um, max_x_um, min_y_um, max_y_um
 
-
 # ---------------------- Panorama helpers ----------------------
+
+_PNG_COMPRESS_LEVEL = 3
 
 def _resolve_panorama(slide, panorama_index: int):
     panoramas = getattr(slide, 'panoramas', []) or []
@@ -329,7 +433,6 @@ def _resolve_panorama(slide, panorama_index: int):
     if panorama_index < 0 or panorama_index >= len(panoramas):
         raise ValueError(f"Invalid panorama index {panorama_index}. Available: 0..{len(panoramas)-1}")
     return panoramas[panorama_index]
-
 
 def _panorama_slide_bounds(panorama):
     metadata = getattr(panorama, 'metadata', {})
@@ -344,7 +447,6 @@ def _panorama_slide_bounds(panorama):
     ys = [y for _, y in coords]
     return min(xs), max(xs), min(ys), max(ys)
 
-
 def _slide_to_panorama_pixel(x_um, y_um, pano_bounds, pano_width, pano_height):
     pano_min_x, pano_max_x, pano_min_y, pano_max_y = pano_bounds
     if pano_max_x == pano_min_x or pano_max_y == pano_min_y:
@@ -355,9 +457,7 @@ def _slide_to_panorama_pixel(x_um, y_um, pano_bounds, pano_width, pano_height):
     py = (pano_max_y - y_um) * scale_y
     return px, py
 
-
 def _panorama_pixel_dims(mcd, panorama, png_path=None):
-    """Panorama (width, height) in px: from an existing PNG's header if given, else by decoding the raster."""
     if png_path is not None and png_path.exists():
         with Image.open(png_path) as im:
             return im.size
@@ -366,19 +466,20 @@ def _panorama_pixel_dims(mcd, panorama, png_path=None):
         return None, None
     return img.shape[1], img.shape[0]
 
-def _save_panorama_image(mcd, panorama, out_path: Path):
+def _save_panorama_image(mcd, panorama, out_path: Path, return_image: bool = False):
     img = mcd.read_panorama(panorama)
     if img is None:
         raise RuntimeError("Panorama image could not be read")
     image = Image.fromarray(img)
-    image.save(out_path)
+    with atomic_write(out_path) as part:
+        image.save(part, format="PNG", compress_level=_PNG_COMPRESS_LEVEL)
+    if return_image:
+        return image.width, image.height, image
     return image.width, image.height
-
 
 _OVERLAY_FONT_CANDIDATES = ("arial.ttf", "Arial.ttf", "DejaVuSans.ttf", "LiberationSans-Regular.ttf")
 
 def _load_overlay_font(font_size: int, fallback):
-    """Return a TrueType font at font_size, trying common cross-platform faces before the bundled default."""
     for name in _OVERLAY_FONT_CANDIDATES:
         try:
             return ImageFont.truetype(name, font_size)
@@ -388,16 +489,19 @@ def _load_overlay_font(font_size: int, fallback):
 
 def _draw_roi_overlay(panorama_path: Path, rois: List[dict],
                       pano_bounds: tuple, pano_w: int, pano_h: int,
-                      out_path: Path) -> None:
+                      out_path: Path, src_image=None) -> None:
     roi_colors = [
         (255, 0, 0), (0, 255, 0), (0, 0, 255), (255, 255, 0),
         (255, 0, 255), (0, 255, 255), (255, 128, 0), (128, 0, 255),
     ]
 
-    src_img = Image.open(panorama_path)
-    img = src_img.copy()
-    src_img.close()
-    del src_img
+    if src_image is not None:
+        img = src_image
+    else:
+        src_img = Image.open(panorama_path)
+        img = src_img.copy()
+        src_img.close()
+        del src_img
     draw = ImageDraw.Draw(img)
 
     font_cache = {}
@@ -443,4 +547,5 @@ def _draw_roi_overlay(panorama_path: Path, rois: List[dict],
         )
         draw.text((text_x, text_y), roi_name, fill=(0, 0, 0), font=font)
 
-    img.save(out_path)
+    with atomic_write(out_path) as part:
+        img.save(part, format="PNG", compress_level=_PNG_COMPRESS_LEVEL)
