@@ -5,28 +5,29 @@ import time
 import click
 
 from pathlib import Path
-from readimc import MCDFile
+from ._mcdread import MCDFile
 from datetime import datetime
 from typing import List, Optional
 
 from .mcd_convert import mcd_convert
 from .mcd_stitch import mcd_stitch, apply_roi_filter
 from .tiff_subset import tiff_subset
+from .fastio import set_memory_limit
 from .helper_utils import (
-    resolve_mcd_files, make_dir, load_rois, parse_index_string,
+    PathLike, as_path, resolve_mcd_files, make_dir, load_rois, parse_index_string,
+    enumerate_panoramas,
+    format_channel_grid,
     _resolve_panorama, _panorama_slide_bounds,
     _save_panorama_image, _draw_roi_overlay, _slide_to_panorama_pixel, _panorama_pixel_dims, compute_canvas_bounds,
 )
 
-# Panoramas smaller than this (either dimension) are likely JPG thumbnails; skip ROI overlays.
-PANORAMA_OVERLAY_MIN_PX = 4000
+PANORAMA_OVERLAY_MIN_PX = 3000
 
-
-# ---------------------- Pipeline Orchestration ----------------------
+# ---------------------- Pipeline orchestration ----------------------
 
 def mcd_process(
-    input_path: Path,
-    output_path: Optional[Path] = None,
+    input_path: PathLike,
+    output_path: Optional[PathLike] = None,
     convert: bool = False,
     stitch: bool = False,
     panorama: Optional[str] = None,
@@ -39,10 +40,6 @@ def mcd_process(
     compression: str = "zstd",
 ) -> int:
     """Unified MCD processing pipeline.
-
-    Orchestrates operations across mcd_convert and mcd_stitch modules.
-    Opens each MCD once for light operations (metadata, panorama, roi_map).
-    Heavy operations (convert, stitch) delegate to their respective modules.
 
     Args:
         input_path: Path to .mcd file or directory of .mcd files.
@@ -62,9 +59,10 @@ def mcd_process(
         Number of .mcd files that failed. Failures are reported and skipped so a
         batch run completes; the CLI exits non-zero when this is greater than 0.
     """
-
+    input_path, output_path = as_path(input_path), as_path(output_path)
 
     active_ops = sum([convert, stitch, panorama is not None, metadata, roi_map is not None, filter is not None, pyramid])
+    writes_files = any([convert, stitch, panorama is not None, roi_map is not None, filter, pyramid])
     if active_ops == 0:
         raise ValueError("No operation specified. Use --convert, --stitch, -p/--panorama, -m/--metadata, or --roi_map.")
 
@@ -85,7 +83,8 @@ def mcd_process(
                 out_dir = output_path / stem
             else:
                 out_dir = mcd_file.parent / "MCD_Processed" / stem
-            make_dir(out_dir)
+            if writes_files:
+                make_dir(out_dir)
 
             with MCDFile(mcd_file) as mcd:
                 try:
@@ -98,16 +97,7 @@ def mcd_process(
                     print(f"  SKIPPED: No ROIs found in {mcd_file}")
                     continue
 
-                panoramas = []
-                for si, slide in enumerate(mcd.slides):
-                    pano_list = getattr(slide, 'panoramas', []) or []
-                    for pi, pano in enumerate(pano_list):
-                        panoramas.append({
-                            "slide_index": si,
-                            "index": pi,
-                            "slide": slide,
-                            "pano": pano,
-                        })
+                panoramas = enumerate_panoramas(mcd)
 
                 channels = rois[0]["channel_labels"]
                 all_rois = list(rois)
@@ -136,7 +126,9 @@ def mcd_process(
                     else:
                         _op_roi_map(mcd, stem, panoramas, all_rois, None, None, out_dir, roi_map, convert=convert)
 
-                if convert:
+                fused = convert and stitch
+
+                if convert and not fused:
                     print(f"  Converting {len(selected_rois)} ROI(s)... ", end="", flush=True)
                     t0 = time.time()
                     mcd_convert(
@@ -151,7 +143,8 @@ def mcd_process(
                     print(f"done ({time.time() - t0:.1f}s)")
 
                 if stitch:
-                    print(f"  Stitching {len(selected_rois)} ROI(s)... ", end="", flush=True)
+                    label = ("Converting + stitching" if fused else "Stitching")
+                    print(f"  {label} {len(selected_rois)} ROI(s)... ", end="", flush=True)
                     t0 = time.time()
                     mcd_stitch(
                         input_path=mcd_file,
@@ -162,13 +155,14 @@ def mcd_process(
                         mcd=mcd,
                         all_rois=all_rois,
                         selected_rois=selected_rois,
+                        convert_out_dir=out_dir if fused else None,
                     )
                     print(f"done ({time.time() - t0:.1f}s)")
 
                 if filter or pyramid:
                     produced = []
                     if convert:
-                        produced.extend(out_dir / f"{r['acq'].description}.ome.tiff" for r in selected_rois)
+                        produced.extend(out_dir / f"{r['file_stem']}.ome.tiff" for r in selected_rois)
                     if stitch:
                         produced.append(out_dir / f"{stem}_stitched.ome.tiff")
                     if produced:
@@ -200,8 +194,7 @@ def mcd_process(
 
     return len(failures)
 
-
-# ---------------------- Operation Implementations ----------------------
+# ---------------------- Operation implementations ----------------------
 
 def _op_metadata(stem: str, rois: List[dict], channels: List[str], panoramas: List[dict]) -> None:
     print(f"\n  MCD FILE: {stem}")
@@ -229,8 +222,9 @@ def _op_metadata(stem: str, rois: List[dict], channels: List[str], panoramas: Li
                 pass
             print(f"    {idx:<4} | {desc:<35} | {ts:<19} | {r['width']:>4}x{r['height']:<4}")
 
-    print(f" \n CHANNELS ({len(channels)}): {', '.join(channels)} \n")
-
+    print(f"\n  CHANNELS ({len(channels)}):")
+    print(format_channel_grid(channels))
+    print()
 
 def _op_panorama(mcd, stem: str, panoramas: List[dict], all_rois: List[dict], out_dir: Path, panorama_arg: str) -> None:
     indices = parse_index_string(panorama_arg)
@@ -249,16 +243,16 @@ def _op_panorama(mcd, stem: str, panoramas: List[dict], all_rois: List[dict], ou
             continue
 
         pano_out = out_dir / f"{stem}_slide_{p['slide_index']}_pano_{p['index']}.png"
-        pano_w, pano_h = _save_panorama_image(mcd, pano, pano_out)
+        pano_w, pano_h, pano_img = _save_panorama_image(mcd, pano, pano_out, return_image=True)
         pano_bounds = _panorama_slide_bounds(pano)
 
-        # Skip overlay for small panoramas (e.g. embedded JPG thumbnails)
-        if all_rois and pano_w >= PANORAMA_OVERLAY_MIN_PX and pano_h >= PANORAMA_OVERLAY_MIN_PX:
+        if all_rois and max(pano_w, pano_h) >= PANORAMA_OVERLAY_MIN_PX:
             _draw_roi_overlay(
                 pano_out, all_rois, pano_bounds, pano_w, pano_h,
                 out_dir / f"{stem}_slide_{p['slide_index']}_pano_{p['index']}_overlay.png",
+                src_image=pano_img,
             )
-
+        del pano_img
 
 def _op_roi_map(
     mcd, stem: str, panoramas: List[dict], rois: List[dict],
@@ -308,7 +302,7 @@ def _op_roi_map(
             for name, sx, sy in canvas_corners_slide:
                 px, py = _slide_to_panorama_pixel(sx, sy, pano_bounds, pano_w, pano_h)
                 canvas_corners_pano.append((name, px, py))
-                
+
             lines.append("Stitched-ROIs to Panorama Mapping")
             lines.append("=" * 40)
             lines.append("")
@@ -332,10 +326,8 @@ def _op_roi_map(
             lines.append("=" * 40)
             lines.append("")
 
-            for i, roi_meta in enumerate(reversed(rois)):
-                desc = (roi_meta["description"] or "").strip() or "ROI_{}".format(
-                    len(rois) - 1 - i,
-                )
+            for i, roi_meta in enumerate(rois):
+                desc = (roi_meta["description"] or "").strip() or "ROI_{}".format(i)
                 lines.append("--- {} ---".format(desc))
                 lines.append("  Dimensions: {}x{} px".format(roi_meta["width"], roi_meta["height"]))
                 lines.append("  Pixel size: {:.4f} x {:.4f} um".format(
@@ -353,7 +345,6 @@ def _op_roi_map(
         out_path = out_dir / "{}_slide_{}_pano_{}_roi_map.txt".format(stem, p['slide_index'], p['index'])
         out_path.write_text("\n".join(lines), encoding="utf-8")
 
-
 # ---------------------- CLI ----------------------
 
 @click.command(name="mcd_process")
@@ -367,10 +358,14 @@ def _op_roi_map(
 @click.option("-d", "--output_type", type=click.Choice(["uint16", "float32"], case_sensitive=True), default="uint16", metavar="TYPE", help="Output data type (uint16 / float32).")
 @click.option("-c", "--compression", type=click.Choice(["None", "LZW", "zstd"], case_sensitive=True), default="zstd", metavar="TYPE", help="Compression mode (none / LZW / zstd).")
 @click.option("-r", "--roi", default=None, type=str, help="Stitch specified ROIs (e.g. '0-5,7,10').")
+@click.option("--max-memory", "max_memory", default=None, metavar="SIZE", help="Cap memory for image buffers, e.g. '8G'. Overrides the detected limit; required only where none can be detected.")
 @click.argument("input_path", type=click.Path(exists=True, path_type=Path))
 @click.argument("output_path", type=click.Path(exists=False, path_type=Path), required=False)
 @click.pass_context
-def _cli_main(ctx, convert, stitch, panorama, metadata, roi_map, filter, pyramid, output_type, compression, roi, input_path, output_path):
+
+def _cli_main(ctx, convert, stitch, panorama, metadata, roi_map, filter, pyramid, output_type, compression, roi, input_path, output_path, max_memory):
+    if max_memory:
+        set_memory_limit(max_memory)
 
     if not convert and not stitch and not panorama and not metadata and roi_map is None and not filter and not pyramid:
         click.echo("Error: No operation specified. Use --convert, --stitch, -p/--panorama, -m/--metadata, or --roi_map.")
@@ -407,7 +402,6 @@ def _cli_main(ctx, convert, stitch, panorama, metadata, roi_map, filter, pyramid
 
     if failed:
         ctx.exit(1)
-
 
 if __name__ == "__main__":
     _cli_main()
