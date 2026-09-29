@@ -13,7 +13,7 @@ Reads Standard BioTools `.mcd` files and writes OME-TIFFs for [QuPath](https://q
 
 ## 🚀 Quick start
 
-Requires **Python 3.9+**.
+Requires **Python 3.9+**. Runs on Windows, macOS and Linux.
 
 ```bash
 pip install mcd_stitcher
@@ -79,9 +79,10 @@ mcd_process "folder/" --convert --stitch      # a whole batch, both outputs, sin
 | `--roi_map IDX` | Region → panorama pixel map. Needs convert/stitch. |
 | `-f, --filter "LIST"` | Keep only these channels, e.g. `"0-5,7"`. Indices from `-m`. |
 | `--pyramid` | Also write a tiled, multi-resolution copy. |
-| `-r, --roi "LIST"` | Only these regions, e.g. `"0-5,7"`. Indices from `-m`. Selection only — never changes layer order. |
+| `-r, --roi "LIST"` | Only these regions, e.g. `"0-5,7"`. Indices from `-m`. |
 | `-d, --output_type` | `uint16` (default) / `float32`. |
 | `-c, --compression` | `zstd` (default) / `LZW` / `None`. |
+| `--max-memory SIZE` | Cap memory for image buffers, e.g. `8G`. Detected automatically from the container/scheduler limit or free RAM; set this to override, or on a shared machine where you want a reproducible plan. Also read from `$MCD_STITCHER_MAX_MEM`. |
 
 `-f` and `--pyramid` are post-processing steps and need `--convert` or `--stitch`.
 
