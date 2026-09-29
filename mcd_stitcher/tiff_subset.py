@@ -7,34 +7,31 @@ from typing import List, Optional
 from pathlib import Path
 from datetime import datetime
 
+from .fastio import set_memory_limit
 from .helper_utils import (
+    PathLike,
+    as_path,
+    format_channel_grid,
     parse_channels,
     read_ome_metadata_only,
     write_ome_tiff_streaming,
     write_pyramidal_ome_tiff_streaming,
 )
 
-
 # ---------------------- Python API ----------------------
 def tiff_subset(
-    input_path: Optional[Path] = None,
-    output_path: Optional[Path] = None,
+    input_path: Optional[PathLike] = None,
+    output_path: Optional[PathLike] = None,
     output_type: str = "uint16",
     compression: str = "zstd",
     filter: Optional[str] = None,
     pyramid: bool = False,
     list_channels: bool = False,
-    out_dir: Optional[Path] = None,
+    out_dir: Optional[PathLike] = None,
     silent: bool = False,
-    tiff_files: Optional[List[Path]] = None,
+    tiff_files: Optional[List[PathLike]] = None,
 ) -> int:
     """Channel-subset / pyramid generation for OME-TIFFs (dual-mode).
-
-    Standalone (tiff_files is None): resolve from input_path (single .tiff file
-        or directory rglob), run the group-aware batch loop, print progress, and
-        log per-file failures to ome_subset_errors.log.
-    Delegated (tiff_files passed): process the given paths into out_dir; used by
-        mcd_process to post-process the OME-TIFFs that convert/stitch wrote.
 
     Args:
         input_path: .tiff file or directory of .tiff files (standalone mode).
@@ -51,6 +48,8 @@ def tiff_subset(
     Returns:
         Number of files processed.
     """
+    input_path, output_path = as_path(input_path), as_path(output_path)
+    out_dir, tiff_files = as_path(out_dir), as_path(tiff_files)
     if not list_channels and not filter and not pyramid:
         raise click.ClickException("No action specified. Use list_channels, filter, or pyramid.")
 
@@ -133,7 +132,6 @@ def tiff_subset(
 
     return count
 
-
 # ---------------------- CLI ----------------------
 @click.command(name='tiff_subset')
 @click.option("-d", "--output_type", type=click.Choice(["uint16", "float32"], case_sensitive=True), default="uint16", metavar="TYPE", help="Output data type (uint16 / float32).")
@@ -141,10 +139,13 @@ def tiff_subset(
 @click.option('-l', '--list-channels', is_flag=True, help='List all channels in a TIFF')
 @click.option('-f', '--filter', type=str, nargs=1, required=False, help="Subset channels (e.g. '0-5,7,10')")
 @click.option('-p', '--pyramid', is_flag=True, help='Create a pyramidal (tiled) TIFF as output')
+@click.option("--max-memory", "max_memory", default=None, metavar="SIZE", help="Cap memory for image buffers, e.g. '8G'. Overrides the detected limit; required only where none can be detected.")
 @click.argument('input_path', type=click.Path(exists=True, path_type=Path))
 @click.argument('output_path', type=click.Path(exists=False, path_type=Path), required=False)
 
-def main(output_type, compression, list_channels, filter, pyramid, input_path, output_path):
+def main(output_type, compression, list_channels, filter, pyramid, input_path, output_path, max_memory):
+    if max_memory:
+        set_memory_limit(max_memory)
     if list_channels and (filter or pyramid):
         raise click.ClickException("-l cannot be combined with -f or -p")
 
@@ -161,14 +162,12 @@ def main(output_type, compression, list_channels, filter, pyramid, input_path, o
         list_channels=list_channels,
     )
 
-
-# ---------------------- Core Function ----------------------
+# ---------------------- Core function ----------------------
 def list_channels_fn(tiff_path: Path):
     """List channels without loading image data."""
     channels, *_ = read_ome_metadata_only(tiff_path)
-    click.echo(f"Channels in {tiff_path}:")
-    for i, name in enumerate(channels):
-        click.echo(f"  {i}: {name}")
+    click.echo(f"Channels in {tiff_path} ({len(channels)}):")
+    click.echo(format_channel_grid(channels))
 
 
 def subset_single_file(
@@ -210,7 +209,6 @@ def subset_single_file(
         write_pyramidal_ome_tiff_streaming(tiff_path, output_path, channel_indices, compression, output_type)
     else:
         write_ome_tiff_streaming(tiff_path, output_path, channel_indices, compression, output_type)
-
 
 if __name__ == "__main__":
     main()
